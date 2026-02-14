@@ -1,6 +1,7 @@
 mod config;
 mod core;
 mod db;
+mod notifications;
 mod rpc;
 mod signals;
 pub mod tags;
@@ -51,7 +52,7 @@ fn main() {
     }
 
     // Build in-memory tag lookup
-    let tag_lookup = std::sync::Arc::new(crate::tags::TagLookup::load_from_db(&db));
+    let tag_lookup = std::sync::Arc::new(std::sync::Mutex::new(crate::tags::TagLookup::load_from_db(&db)));
 
     // Create RPC client
     let rpc = if config.bitcoin.rpc_user.is_some() && config.bitcoin.rpc_password.is_some() {

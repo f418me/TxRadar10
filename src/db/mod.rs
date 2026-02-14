@@ -78,6 +78,19 @@ impl SharedDatabase {
         db.insert_tag(tag)
     }
 
+    /// Insert a tag only if the address doesn't already exist with higher confidence.
+    /// Returns true if the tag was actually inserted.
+    pub fn insert_tag_if_higher(&self, tag: &AddressTag) -> Result<bool, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        if let Some(existing) = db.lookup_address(&tag.address) {
+            if existing.confidence >= tag.confidence {
+                return Ok(false);
+            }
+        }
+        db.insert_tag(tag)?;
+        Ok(true)
+    }
+
     /// Bulk-load tags from a CSV file.
     pub fn load_tags_from_csv(&self, path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
         let db = self.inner.lock().unwrap();

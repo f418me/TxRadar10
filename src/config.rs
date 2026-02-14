@@ -9,6 +9,7 @@ pub struct Config {
     pub signals: SignalConfig,
     pub ui: UiConfig,
     pub database: DatabaseConfig,
+    pub notifications: NotificationConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -48,6 +49,14 @@ pub struct UiConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
+pub struct NotificationConfig {
+    pub enabled: bool,
+    pub min_score: f64,
+    pub cooldown_seconds: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
 pub struct DatabaseConfig {
     pub path: String,
     pub exchange_csv: Option<String>,
@@ -60,6 +69,7 @@ impl Default for Config {
             signals: SignalConfig::default(),
             ui: UiConfig::default(),
             database: DatabaseConfig::default(),
+            notifications: NotificationConfig::default(),
         }
     }
 }
@@ -103,6 +113,16 @@ impl Default for UiConfig {
         Self {
             max_feed_entries: 500,
             stats_update_interval_txs: 100,
+        }
+    }
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_score: 60.0,
+            cooldown_seconds: 30,
         }
     }
 }

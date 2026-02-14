@@ -3,13 +3,14 @@ use tokio::sync::mpsc;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::core::mempool::{MempoolState, RemovalStats};
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
 use crate::core::{AnalyzedTx, MempoolEvent, RemovalReason, ScoredTx};
 use crate::db::{SharedDatabase, SignalBatchEntry};
 use crate::config::Config;
+use crate::notifications::Notifier;
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
 use crate::signals::coinjoin::detect_coinjoin;
@@ -21,6 +22,7 @@ struct ResolvedPrevout {
     value: u64,           // satoshis
     block_height: u32,
     block_time: i64,      // unix timestamp
+    address: Option<String>,
 }
 
 /// Resolve a single prevout: cache first, then RPC.
@@ -33,7 +35,7 @@ async fn resolve_prevout(
     // 1) Check SQLite cache
     match db.get_utxo(prev_txid, prev_vout) {
         Ok(Some((value, _script_type, block_height, block_time))) => {
-            return Some(ResolvedPrevout { value, block_height, block_time });
+            return Some(ResolvedPrevout { value, block_height, block_time, address: None });
         }
         Ok(None) => {} // not cached
         Err(e) => {
@@ -50,12 +52,18 @@ async fn resolve_prevout(
             let value_btc = vout_obj.get("value")?.as_f64()?;
             let value_sats = (value_btc * 100_000_000.0).round() as u64;
 
-            let script_type = vout_obj
-                .get("scriptPubKey")
+            let script_pub_key = vout_obj.get("scriptPubKey");
+
+            let script_type = script_pub_key
                 .and_then(|s| s.get("type"))
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown")
                 .to_string();
+
+            let address = script_pub_key
+                .and_then(|s| s.get("address"))
+                .and_then(|a| a.as_str())
+                .map(|s| s.to_string());
 
             // Block info (may be null for unconfirmed)
             let block_height = tx_json
@@ -77,6 +85,7 @@ async fn resolve_prevout(
                 value: value_sats,
                 block_height,
                 block_time,
+                address,
             })
         }
         Err(e) => {
@@ -91,13 +100,14 @@ async fn resolve_all_prevouts(
     parsed: &bitcoin::Transaction,
     db: &SharedDatabase,
     rpc: &BitcoinRpc,
-) -> (u64, Option<DateTime<Utc>>, Option<u32>, Option<f64>, usize) {
-    // Returns: (total_input_value, oldest_input_time, oldest_input_height, cdd, resolved_count)
+) -> (u64, Option<DateTime<Utc>>, Option<u32>, Option<f64>, usize, Vec<String>) {
+    // Returns: (total_input_value, oldest_input_time, oldest_input_height, cdd, resolved_count, input_addresses)
     let mut total_input_value: u64 = 0;
     let mut oldest_time: Option<i64> = None;
     let mut oldest_height: Option<u32> = None;
     let mut cdd: f64 = 0.0;
     let mut resolved_count: usize = 0;
+    let mut input_addresses: Vec<String> = Vec::new();
     let now = Utc::now();
 
     for input in &parsed.input {
@@ -113,6 +123,10 @@ async fn resolve_all_prevouts(
         if let Some(prevout) = resolve_prevout(&prev_txid, prev_vout, db, rpc).await {
             total_input_value += prevout.value;
             resolved_count += 1;
+
+            if let Some(addr) = prevout.address {
+                input_addresses.push(addr);
+            }
 
             if prevout.block_time > 0 {
                 // Track oldest
@@ -151,7 +165,7 @@ async fn resolve_all_prevouts(
     let oldest_dt = oldest_time.and_then(|t| Utc.timestamp_opt(t, 0).single());
     let cdd_opt = if resolved_count > 0 && cdd > 0.0 { Some(cdd) } else { None };
 
-    (total_input_value, oldest_dt, oldest_height, cdd_opt, resolved_count)
+    (total_input_value, oldest_dt, oldest_height, cdd_opt, resolved_count, input_addresses)
 }
 
 /// How often to send stats to UI (every N txs or every N seconds).
@@ -226,9 +240,10 @@ pub async fn run_pipeline(
     ui_tx: mpsc::UnboundedSender<PipelineOutput>,
     db: SharedDatabase,
     rpc: BitcoinRpc,
-    tag_lookup: Arc<TagLookup>,
+    tag_lookup: Arc<Mutex<TagLookup>>,
     config: Config,
 ) {
+    let notifier = Notifier::new(&config.notifications);
     let engine = SignalEngine::with_config(
         config.signals.weights.clone(),
         config.signals.alert_thresholds.clone(),
@@ -269,7 +284,7 @@ pub async fn run_pipeline(
                 let output_count = parsed.output.len();
 
                 // Resolve prevouts
-                let (total_input_value, oldest_input_time, oldest_input_height, coin_days_destroyed, resolved_count) =
+                let (total_input_value, oldest_input_time, oldest_input_height, coin_days_destroyed, resolved_count, input_addresses) =
                     resolve_all_prevouts(&parsed, &db, &rpc).await;
 
                 let prevouts_resolved = resolved_count == input_count;
@@ -288,21 +303,31 @@ pub async fn run_pipeline(
                     0.0
                 };
 
+                // CoinJoin detection (before tag operations so we can guard clustering)
+                let coinjoin_result = detect_coinjoin(&parsed);
+
                 // Check outputs against known exchange addresses
-                let output_matches = tag_lookup.check_outputs(&parsed);
+                let (output_matches, input_matches) = {
+                    let tl = tag_lookup.lock().unwrap();
+                    (tl.check_outputs(&parsed), tl.check_input_addresses(&input_addresses))
+                };
                 let to_exchange = !output_matches.is_empty();
                 let to_exchange_confidence = output_matches
                     .iter()
                     .map(|m| m.tag.confidence)
                     .fold(0.0_f64, f64::max);
 
-                // Input address checking would require prevout scripts;
-                // for now we don't have them resolved to addresses
-                let from_exchange = false;
-                let from_exchange_confidence = 0.0;
+                let from_exchange = !input_matches.is_empty();
+                let from_exchange_confidence = input_matches
+                    .iter()
+                    .map(|m| m.tag.confidence)
+                    .fold(0.0_f64, f64::max);
 
-                // CoinJoin detection
-                let coinjoin_result = detect_coinjoin(&parsed);
+                // Cluster expansion: tag unknown input addresses via CIOH
+                if !input_addresses.is_empty() {
+                    let mut tl = tag_lookup.lock().unwrap();
+                    tl.expand_from_tx(&input_addresses, coinjoin_result.is_coinjoin);
+                }
 
                 let analyzed = AnalyzedTx {
                     txid: txid_str,
@@ -333,6 +358,9 @@ pub async fn run_pipeline(
 
                 let scored = engine.score(&analyzed);
                 tx_count += 1;
+
+                // Desktop notification (fire-and-forget, cooldown-protected)
+                notifier.notify(&scored);
 
                 // Persist signal if score is above noise threshold (non-blocking)
                 if scored.composite_score > signal_min_score {

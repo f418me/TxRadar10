@@ -31,6 +31,11 @@ medium = 40.0
 max_feed_entries = 500
 stats_update_interval_txs = 100
 
+[notifications]
+enabled = true
+min_score = 60.0
+cooldown_seconds = 30
+
 [database]
 path = "data/utxo_cache.db"
 exchange_csv = "data/exchange_addresses.csv"
