@@ -124,11 +124,13 @@ impl BitcoinRpc {
     }
 
     /// Get mempool info (size, bytes, usage, fees).
+    #[allow(dead_code)]
     pub async fn getmempoolinfo(&self) -> Result<Value, RpcError> {
         self.call("getmempoolinfo", vec![]).await
     }
 
     /// Get blockchain info (chain, blocks, headers, etc.).
+    #[allow(dead_code)]
     pub async fn getblockchaininfo(&self) -> Result<Value, RpcError> {
         self.call("getblockchaininfo", vec![]).await
     }

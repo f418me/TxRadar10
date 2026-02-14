@@ -47,6 +47,7 @@ impl SharedDatabase {
     }
 
     /// Store a signal for history.
+    #[allow(dead_code)]
     pub fn store_signal(
         &self,
         txid: &str,
@@ -103,6 +104,7 @@ impl Database {
     }
 
     /// Store a signal for history/backtesting.
+    #[allow(dead_code)]
     pub fn store_signal(
         &self,
         txid: &str,

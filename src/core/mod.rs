@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// A mempool lifecycle event from ZMQ sequence topic.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum MempoolEvent {
     TxAdded { txid: [u8; 32], raw: Vec<u8> },
     TxRemoved { txid: [u8; 32], reason: RemovalReason },
@@ -15,6 +16,7 @@ pub enum MempoolEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum RemovalReason {
     Confirmed,
     Replaced,
