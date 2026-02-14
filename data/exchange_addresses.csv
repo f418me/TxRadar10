@@ -1,0 +1,50 @@
+address,entity,entity_type,confidence,source
+# Binance
+34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo,Binance,exchange,0.95,public_report
+3LYJfcfHPXYJreMsASk2jkn69LWEYKzexb,Binance,exchange,0.95,public_report
+3M219KR5vEneNb47ewrPfWyb5jQ2DjxRP6,Binance,exchange,0.95,public_report
+1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s,Binance,exchange,0.95,public_report
+bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h,Binance,exchange,0.95,public_report
+39884E3j6KZj82FK4vcCrkUvWYL5MQaS3v,Binance,exchange,0.90,public_report
+bc1qnkf00r2stw2gtyev9w2dsfnhfaehgtqnt7rh7t,Binance,exchange,0.90,public_report
+# Coinbase
+3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B,Coinbase,exchange,0.95,public_report
+3Kzh9qAqVWQhEsfQz7zEQL1EuSx5tyNLNS,Coinbase,exchange,0.95,public_report
+3QW7TR7PrgMVfdzJgrgZUBgmFg3buKKo5k,Coinbase,exchange,0.90,blockchain_label
+bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh,Coinbase,exchange,0.90,blockchain_label
+3LQUu4v9z6KNch71j7kbj8GPeAGUo1FW6a,Coinbase,exchange,0.85,cluster_analysis
+395xgmFbbo8MwTkDBqqGrcbNjS7PJHoANd,Coinbase,exchange,0.85,cluster_analysis
+# Kraken
+3AfP2B3GVGL9FuWCaQjGXP2mzjDAQcedMS,Kraken,exchange,0.90,community_label
+bc1qxl7c3cwu77rsd5c0sst7tmt0nctnz3978nwvls,Kraken,exchange,0.90,community_label
+3FupZp77ySr7jwoLYEJ9mwzJpvoNBXsBnE,Kraken,exchange,0.85,cluster_analysis
+bc1qr4dl5wa7kl8yu792dceg9z5knl2gkn220lk7a9,Kraken,exchange,0.85,cluster_analysis
+bc1q2fjl8xl2f48gkmfrmfywn0ql7emsryesgalaml,Kraken,exchange,0.85,cluster_analysis
+# Bitfinex
+3D2oetdNuZUqQHPJmcMDDHYoqkyNVsFk9r,Bitfinex,exchange,0.95,public_report
+bc1qgdjqv0av3q56jvd82tkdjpy7gdp9ut8tlqmgrpmv24sq90ecnvqqjwvw97,Bitfinex,exchange,0.95,public_report
+3JZq4atUahhuA9rLhXLMhhTo133J9rF97j,Bitfinex,exchange,0.90,cluster_analysis
+1KYiKJEfdJtap9QX2v9BXJMpz2SfU4pgZw,Bitfinex,exchange,0.85,cluster_analysis
+# Gemini
+36PrZ1KHYMpqSyAQXSG8VwbUiq2EogxLo2,Gemini,exchange,0.90,public_report
+3NxitTBaLgFzLqFLAjSD9JM1RJbcwi4Uxo,Gemini,exchange,0.85,cluster_analysis
+# OKX
+3LhFMbiSHQSDKb38uWrCJWNhqr6NjBP4EZ,OKX,exchange,0.85,community_label
+bc1q2s3rjwvam9dt2ftt4sqxqjf3twav0gdx0k0q2etxflx38c3x4jmqr8vyzs,OKX,exchange,0.85,community_label
+# Huobi/HTX
+38WJtwB87o4EU4RYq2NaBqjeFiKagBL8Sq,Huobi,exchange,0.90,public_report
+3Cbq7aT1tY8kMxWLbitaG7yT6bPbKChq64,Huobi,exchange,0.85,cluster_analysis
+1LAnF8h3qMGx3TSwNUHVneBZUEpwE4gu3D,Huobi,exchange,0.85,cluster_analysis
+bc1qngvk44u5y46cvkae3rnmpmy5h7nkcyuyekl5k5,Huobi,exchange,0.80,cluster_analysis
+# Bybit
+bc1qjysjfd9t9aspttpjqzv68k0ydpe7pvyd5v0jgc,Bybit,exchange,0.85,community_label
+# Bitstamp
+3P3QsMVK89JBNqZQv5zMAKG8FK3kJM4rjt,Bitstamp,exchange,0.90,public_report
+3BiKLKhi1RFmcMkgRokr1VHTGPzmNFsVyQ,Bitstamp,exchange,0.85,cluster_analysis
+# Kucoin
+3M1dfsVr3C48jVjMrig1oGLQtwriT1gSMi,Kucoin,exchange,0.85,community_label
+# Crypto.com
+3Gos2RUv9FNFfwJWm6SbsGRQf9eXJrpqEU,Crypto.com,exchange,0.85,community_label
+bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf,Crypto.com,exchange,0.85,community_label
+# Bittrex
+3HcEUoSPMF5BDqxMjmUGU2GWyQGVrAE2RX,Bittrex,exchange,0.85,cluster_analysis

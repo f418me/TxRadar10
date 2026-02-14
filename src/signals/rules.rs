@@ -17,6 +17,7 @@ pub fn default_rules() -> Vec<Box<dyn Rule + Send + Sync>> {
         Box::new(InputCountRule),
         Box::new(FeeRateRule),
         Box::new(RbfRule),
+        Box::new(ExchangeFlowRule),
     ]
 }
 
@@ -91,5 +92,25 @@ impl Rule for RbfRule {
     fn weight(&self) -> f64 { 2.0 }
     fn evaluate(&self, tx: &AnalyzedTx) -> f64 {
         if tx.is_rbf_signaling { 0.5 } else { 0.0 }
+    }
+}
+
+/// Exchange flow detection — the highest-weight signal.
+/// Outputs going to known exchanges indicate potential sell pressure.
+/// Inputs from exchanges (withdrawals) reduce the score.
+struct ExchangeFlowRule;
+impl Rule for ExchangeFlowRule {
+    fn name(&self) -> &str { "exchange_flow" }
+    fn weight(&self) -> f64 { 10.0 }
+    fn evaluate(&self, tx: &AnalyzedTx) -> f64 {
+        if tx.to_exchange {
+            // Score weighted by confidence of the tag match
+            tx.to_exchange_confidence.clamp(0.0, 1.0)
+        } else if tx.from_exchange {
+            // Withdrawal from exchange — reduces alarm (negative contribution)
+            -(tx.from_exchange_confidence.clamp(0.0, 1.0) * 0.5)
+        } else {
+            0.0
+        }
     }
 }

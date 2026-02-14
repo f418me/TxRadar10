@@ -25,6 +25,15 @@ pub fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_signals_score ON signals(score DESC);
         CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_utxo_cache_height ON utxo_cache(block_height);
+
+        CREATE TABLE IF NOT EXISTS address_tags (
+            address     TEXT PRIMARY KEY,
+            entity      TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            confidence  REAL DEFAULT 0.5,
+            source      TEXT,
+            updated_at  TEXT
+        );
         ",
     )?;
     Ok(())

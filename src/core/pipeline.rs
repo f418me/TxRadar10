@@ -3,11 +3,14 @@ use tokio::sync::mpsc;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, warn};
 
+use std::sync::Arc;
+
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
 use crate::core::{AnalyzedTx, MempoolEvent, ScoredTx};
 use crate::db::SharedDatabase;
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
+use crate::tags::TagLookup;
 
 /// Resolved prevout info for a single input.
 #[derive(Debug)]
@@ -155,6 +158,7 @@ pub async fn run_pipeline(
     ui_tx: mpsc::UnboundedSender<PipelineOutput>,
     db: SharedDatabase,
     rpc: BitcoinRpc,
+    tag_lookup: Arc<TagLookup>,
 ) {
     let engine = SignalEngine::new();
     let mut tx_count: u64 = 0;
@@ -202,6 +206,19 @@ pub async fn run_pipeline(
                     0.0
                 };
 
+                // Check outputs against known exchange addresses
+                let output_matches = tag_lookup.check_outputs(&parsed);
+                let to_exchange = !output_matches.is_empty();
+                let to_exchange_confidence = output_matches
+                    .iter()
+                    .map(|m| m.tag.confidence)
+                    .fold(0.0_f64, f64::max);
+
+                // Input address checking would require prevout scripts;
+                // for now we don't have them resolved to addresses
+                let from_exchange = false;
+                let from_exchange_confidence = 0.0;
+
                 let analyzed = AnalyzedTx {
                     txid: txid_str,
                     raw_size: raw.len(),
@@ -218,6 +235,10 @@ pub async fn run_pipeline(
                     is_rbf_signaling: rbf,
                     seen_at: Utc::now(),
                     prevouts_resolved,
+                    to_exchange,
+                    to_exchange_confidence,
+                    from_exchange,
+                    from_exchange_confidence,
                 };
 
                 let scored = engine.score(&analyzed);

@@ -2,6 +2,7 @@ mod core;
 mod db;
 mod rpc;
 mod signals;
+pub mod tags;
 mod ui;
 
 use std::path::Path;
@@ -30,6 +31,18 @@ fn main() {
         .expect("Failed to open UTXO cache database");
     tracing::info!("UTXO cache database opened at data/utxo_cache.db");
 
+    // Load exchange address tags from CSV if available
+    let csv_path = db_dir.join("exchange_addresses.csv");
+    if csv_path.exists() {
+        match db.load_tags_from_csv(&csv_path) {
+            Ok(count) => tracing::info!("Loaded {count} address tags from CSV"),
+            Err(e) => tracing::warn!("Failed to load address tags CSV: {e}"),
+        }
+    }
+
+    // Build in-memory tag lookup
+    let tag_lookup = std::sync::Arc::new(crate::tags::TagLookup::load_from_db(&db));
+
     // Create RPC client (reads credentials from bitcoin.conf or env)
     let rpc = BitcoinRpc::from_config();
     tracing::info!("Bitcoin RPC client configured");
@@ -50,7 +63,7 @@ fn main() {
     // Start pipeline in a tokio runtime on a separate thread
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(core::pipeline::run_pipeline(zmq_rx, ui_tx, db, rpc));
+        rt.block_on(core::pipeline::run_pipeline(zmq_rx, ui_tx, db, rpc, tag_lookup));
     });
     tracing::info!("Pipeline thread started");
 

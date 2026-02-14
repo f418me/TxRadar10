@@ -43,6 +43,14 @@ pub struct AnalyzedTx {
     pub is_rbf_signaling: bool,
     pub seen_at: DateTime<Utc>,
     pub prevouts_resolved: bool,
+    /// Whether any output goes to a known exchange address.
+    pub to_exchange: bool,
+    /// Highest confidence of exchange tag matches on outputs.
+    pub to_exchange_confidence: f64,
+    /// Whether any input comes from a known exchange address.
+    pub from_exchange: bool,
+    /// Highest confidence of exchange tag matches on inputs.
+    pub from_exchange_confidence: f64,
 }
 
 /// A scored transaction ready for UI display.
