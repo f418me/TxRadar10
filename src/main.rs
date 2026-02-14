@@ -4,10 +4,13 @@ mod rpc;
 mod signals;
 mod ui;
 
+use std::path::Path;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 use crate::core::pipeline::PipelineOutput;
+use crate::db::SharedDatabase;
+use crate::rpc::BitcoinRpc;
 use crate::rpc::zmq_sub::{ZmqConfig, start_zmq_subscriber};
 
 fn main() {
@@ -19,6 +22,17 @@ fn main() {
         .init();
 
     tracing::info!("⚡ TxRadar10 starting...");
+
+    // Open UTXO cache database
+    let db_dir = Path::new("data");
+    std::fs::create_dir_all(db_dir).expect("Failed to create data/ directory");
+    let db = SharedDatabase::open(&db_dir.join("utxo_cache.db"))
+        .expect("Failed to open UTXO cache database");
+    tracing::info!("UTXO cache database opened at data/utxo_cache.db");
+
+    // Create RPC client (reads credentials from bitcoin.conf or env)
+    let rpc = BitcoinRpc::from_config();
+    tracing::info!("Bitcoin RPC client configured");
 
     // ZMQ → Pipeline channel
     let (zmq_tx, zmq_rx) = mpsc::unbounded_channel();
@@ -36,7 +50,7 @@ fn main() {
     // Start pipeline in a tokio runtime on a separate thread
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        rt.block_on(core::pipeline::run_pipeline(zmq_rx, ui_tx));
+        rt.block_on(core::pipeline::run_pipeline(zmq_rx, ui_tx, db, rpc));
     });
     tracing::info!("Pipeline thread started");
 

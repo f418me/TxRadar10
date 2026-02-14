@@ -2,9 +2,61 @@ pub mod schema;
 
 use rusqlite::Connection;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub struct Database {
     conn: Connection,
+}
+
+/// Thread-safe wrapper around Database.
+#[derive(Clone)]
+pub struct SharedDatabase {
+    inner: Arc<Mutex<Database>>,
+}
+
+impl SharedDatabase {
+    pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
+        let db = Database::open(path)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(db)),
+        })
+    }
+
+    /// Look up cached UTXO metadata. Returns (value_sats, script_type, block_height, block_time).
+    pub fn get_utxo(
+        &self,
+        txid: &str,
+        vout: u32,
+    ) -> Result<Option<(u64, String, u32, i64)>, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.get_utxo(txid, vout)
+    }
+
+    /// Cache a resolved UTXO.
+    pub fn cache_utxo(
+        &self,
+        txid: &str,
+        vout: u32,
+        value: u64,
+        script_type: &str,
+        block_height: u32,
+        block_time: i64,
+    ) -> Result<(), rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.cache_utxo(txid, vout, value, script_type, block_height, block_time)
+    }
+
+    /// Store a signal for history.
+    pub fn store_signal(
+        &self,
+        txid: &str,
+        score: f64,
+        alert_level: &str,
+        rule_scores_json: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.store_signal(txid, score, alert_level, rule_scores_json)
+    }
 }
 
 impl Database {

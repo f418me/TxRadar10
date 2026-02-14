@@ -2,8 +2,10 @@ pub mod zmq_sub;
 
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::path::PathBuf;
 
 /// Simple Bitcoin Core JSON-RPC client.
+#[derive(Clone)]
 pub struct BitcoinRpc {
     url: String,
     client: Client,
@@ -19,6 +21,60 @@ impl BitcoinRpc {
             client: Client::new(),
             auth,
         }
+    }
+
+    /// Create RPC client from bitcoin.conf or environment variables.
+    pub fn from_config() -> Self {
+        // Try environment variables first
+        let host = std::env::var("BITCOIN_RPC_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port: u16 = std::env::var("BITCOIN_RPC_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8332);
+
+        // Try cookie auth first
+        let cookie_path = dirs_cookie_path();
+        if let Ok(cookie) = std::fs::read_to_string(&cookie_path) {
+            let cookie = cookie.trim();
+            if let Some((_user, _pass)) = cookie.split_once(':') {
+                tracing::info!("Using cookie auth from {}", cookie_path.display());
+                return Self::new(&host, port, _user, _pass);
+            }
+        }
+
+        // Try bitcoin.conf
+        let conf_path = bitcoin_conf_path();
+        if let Ok(contents) = std::fs::read_to_string(&conf_path) {
+            let mut user = None;
+            let mut pass = None;
+            for line in contents.lines() {
+                let line = line.trim();
+                if let Some(val) = line.strip_prefix("rpcuser=") {
+                    user = Some(val.to_string());
+                }
+                if let Some(val) = line.strip_prefix("rpcpassword=") {
+                    pass = Some(val.to_string());
+                }
+                if let Some(val) = line.strip_prefix("rpcport=") {
+                    if let Ok(p) = val.parse::<u16>() {
+                        return Self::new(
+                            &host,
+                            p,
+                            &user.unwrap_or_else(|| "bitcoinrpc".into()),
+                            &pass.unwrap_or_default(),
+                        );
+                    }
+                }
+            }
+            if let (Some(u), Some(p)) = (user, pass) {
+                tracing::info!("Using RPC credentials from bitcoin.conf");
+                return Self::new(&host, port, &u, &p);
+            }
+        }
+
+        // Fallback defaults
+        tracing::warn!("Using default RPC credentials (bitcoinrpc)");
+        Self::new(&host, port, "bitcoinrpc", "bitcoinrpc")
     }
 
     pub async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
@@ -76,6 +132,42 @@ impl BitcoinRpc {
     pub async fn getblockchaininfo(&self) -> Result<Value, RpcError> {
         self.call("getblockchaininfo", vec![]).await
     }
+}
+
+fn dirs_cookie_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        dirs_home().join("Library/Application Support/Bitcoin/.cookie")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        dirs_home().join(".bitcoin/.cookie")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        dirs_home().join(".bitcoin/.cookie")
+    }
+}
+
+fn bitcoin_conf_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        dirs_home().join("Library/Application Support/Bitcoin/bitcoin.conf")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        dirs_home().join(".bitcoin/bitcoin.conf")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        dirs_home().join(".bitcoin/bitcoin.conf")
+    }
+}
+
+fn dirs_home() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
 #[derive(Debug)]
