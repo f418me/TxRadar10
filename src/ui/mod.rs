@@ -6,6 +6,7 @@ pub mod stats;
 use dioxus::prelude::*;
 
 use crate::core::ScoredTx;
+use crate::core::mempool::RemovalStats;
 use crate::core::pipeline::PipelineOutput;
 use crate::db::SignalRecord;
 
@@ -21,6 +22,7 @@ pub fn App() -> Element {
     let mut total_vsize = use_signal(|| 0usize);
     let mut total_fees = use_signal(|| 0u64);
     let mut fee_histogram = use_signal(Vec::<(String, usize)>::new);
+    let mut removal_stats = use_signal(RemovalStats::default);
     let mut history_signals = use_signal(Vec::<SignalRecord>::new);
     let mut signal_stats = use_signal(history::SignalStats::default);
 
@@ -73,11 +75,13 @@ pub fn App() -> Element {
                     total_vsize: tv,
                     total_fees: tf,
                     fee_histogram: fh,
+                    removal_stats: rs,
                 } => {
                     pending_count.set(pc);
                     total_vsize.set(tv);
                     total_fees.set(tf);
                     fee_histogram.set(fh);
+                    removal_stats.set(rs);
                 }
             }
         }
@@ -106,6 +110,7 @@ pub fn App() -> Element {
                         total_vsize,
                         total_fees,
                         fee_histogram,
+                        removal_stats,
                     }
                     alerts::AlertPanel { txs: scored_txs }
                     history::HistoryPanel {

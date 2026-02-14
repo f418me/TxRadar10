@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 
+use crate::core::mempool::RemovalStats;
+
 #[component]
 pub fn MempoolStats(
     mempool_size: Signal<usize>,
@@ -8,6 +10,7 @@ pub fn MempoolStats(
     total_vsize: Signal<usize>,
     total_fees: Signal<u64>,
     fee_histogram: Signal<Vec<(String, usize)>>,
+    removal_stats: Signal<RemovalStats>,
 ) -> Element {
     let fees_btc = *total_fees.read() as f64 / 100_000_000.0;
     let vsize_mb = *total_vsize.read() as f64 / 1_000_000.0;
@@ -27,6 +30,24 @@ pub fn MempoolStats(
                 p { "Pending: {pending_count}" }
                 p { "Total vSize: {vsize_mb:.2} MB" }
                 p { "Total fees: {fees_btc:.4} BTC" }
+
+                // Removal stats
+                {
+                    let rs = removal_stats.read();
+                    let total_removed = rs.total();
+                    if total_removed > 0 {
+                        rsx! {
+                            div { style: "margin-top: 8px; padding-top: 8px; border-top: 1px solid #333;",
+                                p { style: "color: #f7931a; font-weight: bold;", "Removed: {total_removed}" }
+                                p { style: "font-size: 11px; color: #aaa;",
+                                    "confirmed: {rs.confirmed} · replaced: {rs.replaced} · evicted: {rs.evicted} · unknown: {rs.unknown}"
+                                }
+                            }
+                        }
+                    } else {
+                        rsx! {}
+                    }
+                }
 
                 if !histogram.is_empty() {
                     h3 { style: "color: #f7931a; margin-top: 8px; font-size: 13px;",

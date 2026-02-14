@@ -5,7 +5,7 @@ use tracing::{debug, error, info, warn};
 
 use std::sync::Arc;
 
-use crate::core::mempool::MempoolState;
+use crate::core::mempool::{MempoolState, RemovalStats};
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
 use crate::core::{AnalyzedTx, MempoolEvent, RemovalReason, ScoredTx};
 use crate::db::{SharedDatabase, SignalBatchEntry};
@@ -170,6 +170,7 @@ fn send_stats(state: &MempoolState, ui_tx: &mpsc::UnboundedSender<PipelineOutput
         total_vsize: state.total_vsize(),
         total_fees: state.total_fees(),
         fee_histogram: state.fee_histogram(),
+        removal_stats: state.removal_stats().clone(),
     });
 }
 
@@ -403,5 +404,6 @@ pub enum PipelineOutput {
         total_vsize: usize,
         total_fees: u64,
         fee_histogram: Vec<(String, usize)>,
+        removal_stats: RemovalStats,
     },
 }

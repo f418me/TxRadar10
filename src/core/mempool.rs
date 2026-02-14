@@ -33,12 +33,29 @@ const FEE_BUCKETS: &[(f64, f64, &str)] = &[
     (100.0, f64::MAX, "100+"),
 ];
 
+/// Removal statistics by reason.
+#[derive(Debug, Clone, Default)]
+pub struct RemovalStats {
+    pub confirmed: u64,
+    pub replaced: u64,
+    pub evicted: u64,
+    pub unknown: u64,
+}
+
+impl RemovalStats {
+    pub fn total(&self) -> u64 {
+        self.confirmed + self.replaced + self.evicted + self.unknown
+    }
+}
+
 /// In-memory mempool state tracker.
 #[derive(Debug, Default)]
 pub struct MempoolState {
     entries: HashMap<String, MempoolEntry>,
     /// RBF replacement chains: replaced_txid → replacing_txid
     replacement_chain: HashMap<String, String>,
+    /// Removal statistics by reason.
+    removal_stats: RemovalStats,
 }
 
 impl MempoolState {
@@ -67,9 +84,31 @@ impl MempoolState {
             _ => TxState::Evicted,
         };
         if let Some(entry) = self.entries.get_mut(txid) {
+            if entry.state == TxState::Pending {
+                // Only count stats for transitions from Pending
+                match reason {
+                    RemovalReason::Confirmed => self.removal_stats.confirmed += 1,
+                    RemovalReason::Replaced => self.removal_stats.replaced += 1,
+                    RemovalReason::Evicted => self.removal_stats.evicted += 1,
+                    RemovalReason::Conflict | RemovalReason::Unknown => self.removal_stats.unknown += 1,
+                }
+            }
             entry.state = new_state;
             entry.state_changed_at = Utc::now();
+        } else {
+            // Tx not tracked (arrived before we started), still count it
+            match reason {
+                RemovalReason::Confirmed => self.removal_stats.confirmed += 1,
+                RemovalReason::Replaced => self.removal_stats.replaced += 1,
+                RemovalReason::Evicted => self.removal_stats.evicted += 1,
+                RemovalReason::Conflict | RemovalReason::Unknown => self.removal_stats.unknown += 1,
+            }
         }
+    }
+
+    /// Get removal statistics.
+    pub fn removal_stats(&self) -> &RemovalStats {
+        &self.removal_stats
     }
 
     /// Record an RBF replacement: `old_txid` was replaced by `new_txid`.
