@@ -1,10 +1,28 @@
 pub mod schema;
 
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::tags::AddressTag;
+
+/// A persisted signal record from the database.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignalRecord {
+    pub id: i64,
+    pub txid: String,
+    pub score: f64,
+    pub alert_level: String,
+    pub rule_scores_json: String,
+    pub to_exchange: bool,
+    pub total_input_value: u64,
+    pub fee_rate: f64,
+    pub coin_days_destroyed: Option<f64>,
+    pub block_height_seen: u32,
+    pub created_at: String,
+}
 
 pub struct Database {
     conn: Connection,
@@ -72,18 +90,68 @@ impl SharedDatabase {
         db.all_tags()
     }
 
-    /// Store a signal for history.
-    #[allow(dead_code)]
+    /// Store a signal for history (extended version).
     pub fn store_signal(
         &self,
         txid: &str,
         score: f64,
         alert_level: &str,
         rule_scores_json: &str,
+        to_exchange: bool,
+        total_input_value: u64,
+        fee_rate: f64,
+        coin_days_destroyed: Option<f64>,
+        block_height_seen: u32,
     ) -> Result<(), rusqlite::Error> {
         let db = self.inner.lock().unwrap();
-        db.store_signal(txid, score, alert_level, rule_scores_json)
+        db.store_signal(txid, score, alert_level, rule_scores_json, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen)
     }
+
+    /// Batch-store multiple signals in a single transaction.
+    pub fn store_signals_batch(
+        &self,
+        signals: &[SignalBatchEntry],
+    ) -> Result<(), rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.store_signals_batch(signals)
+    }
+
+    /// Get recent signals ordered by time.
+    pub fn get_recent_signals(&self, limit: usize) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.get_recent_signals(limit)
+    }
+
+    /// Get signals with score above threshold.
+    pub fn get_signals_above_score(&self, min_score: f64, limit: usize) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.get_signals_above_score(min_score, limit)
+    }
+
+    /// Get total signal count.
+    pub fn get_signal_count(&self) -> Result<usize, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.get_signal_count()
+    }
+
+    /// Get signals within a time range.
+    pub fn get_signals_by_timerange(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let db = self.inner.lock().unwrap();
+        db.get_signals_by_timerange(from, to)
+    }
+}
+
+/// Entry for batch insertion.
+pub struct SignalBatchEntry {
+    pub txid: String,
+    pub score: f64,
+    pub alert_level: String,
+    pub rule_scores_json: String,
+    pub to_exchange: bool,
+    pub total_input_value: u64,
+    pub fee_rate: f64,
+    pub coin_days_destroyed: Option<f64>,
+    pub block_height_seen: u32,
 }
 
 impl Database {
@@ -203,19 +271,102 @@ impl Database {
     }
 
     /// Store a signal for history/backtesting.
-    #[allow(dead_code)]
     pub fn store_signal(
         &self,
         txid: &str,
         score: f64,
         alert_level: &str,
         rule_scores_json: &str,
+        to_exchange: bool,
+        total_input_value: u64,
+        fee_rate: f64,
+        coin_days_destroyed: Option<f64>,
+        block_height_seen: u32,
     ) -> Result<(), rusqlite::Error> {
         self.conn.execute(
-            "INSERT INTO signals (txid, score, alert_level, rule_scores, created_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-            rusqlite::params![txid, score, alert_level, rule_scores_json],
+            "INSERT INTO signals (txid, score, alert_level, rule_scores, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+            rusqlite::params![txid, score, alert_level, rule_scores_json, to_exchange as i32, total_input_value, fee_rate, coin_days_destroyed, block_height_seen],
         )?;
         Ok(())
+    }
+
+    /// Batch-store multiple signals in a single transaction.
+    pub fn store_signals_batch(
+        &self,
+        signals: &[SignalBatchEntry],
+    ) -> Result<(), rusqlite::Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO signals (txid, score, alert_level, rule_scores, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))"
+            )?;
+            for s in signals {
+                stmt.execute(rusqlite::params![
+                    s.txid, s.score, s.alert_level, s.rule_scores_json,
+                    s.to_exchange as i32, s.total_input_value, s.fee_rate,
+                    s.coin_days_destroyed, s.block_height_seen
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn row_to_signal(row: &rusqlite::Row) -> rusqlite::Result<SignalRecord> {
+        let to_ex: i32 = row.get(5)?;
+        Ok(SignalRecord {
+            id: row.get(0)?,
+            txid: row.get(1)?,
+            score: row.get(2)?,
+            alert_level: row.get(3)?,
+            rule_scores_json: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            to_exchange: to_ex != 0,
+            total_input_value: row.get::<_, i64>(6)? as u64,
+            fee_rate: row.get(7)?,
+            coin_days_destroyed: row.get(8)?,
+            block_height_seen: row.get::<_, i64>(9)? as u32,
+            created_at: row.get(10)?,
+        })
+    }
+
+    /// Get recent signals ordered by time.
+    pub fn get_recent_signals(&self, limit: usize) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, txid, score, alert_level, rule_scores, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen, created_at
+             FROM signals ORDER BY created_at DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit as i64], Self::row_to_signal)?;
+        rows.collect()
+    }
+
+    /// Get signals with score above threshold.
+    pub fn get_signals_above_score(&self, min_score: f64, limit: usize) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, txid, score, alert_level, rule_scores, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen, created_at
+             FROM signals WHERE score >= ?1 ORDER BY score DESC LIMIT ?2"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![min_score, limit as i64], Self::row_to_signal)?;
+        rows.collect()
+    }
+
+    /// Get total signal count.
+    pub fn get_signal_count(&self) -> Result<usize, rusqlite::Error> {
+        self.conn.query_row("SELECT COUNT(*) FROM signals", [], |row| {
+            row.get::<_, i64>(0).map(|c| c as usize)
+        })
+    }
+
+    /// Get signals within a time range.
+    pub fn get_signals_by_timerange(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<SignalRecord>, rusqlite::Error> {
+        let from_str = from.format("%Y-%m-%d %H:%M:%S").to_string();
+        let to_str = to.format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT id, txid, score, alert_level, rule_scores, to_exchange, total_input_value, fee_rate, coin_days_destroyed, block_height_seen, created_at
+             FROM signals WHERE created_at >= ?1 AND created_at <= ?2 ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map(rusqlite::params![from_str, to_str], Self::row_to_signal)?;
+        rows.collect()
     }
 }

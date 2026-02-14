@@ -53,8 +53,9 @@ fn main() {
     // Pipeline → UI channel
     let (ui_tx, ui_rx) = mpsc::unbounded_channel::<PipelineOutput>();
 
-    // Store UI receiver in a global so the Dioxus app can grab it
+    // Store UI receiver and DB handle in globals so the Dioxus app can grab them
     UI_RX.set(std::sync::Mutex::new(Some(ui_rx))).ok();
+    UI_DB.set(std::sync::Mutex::new(Some(db.clone()))).ok();
 
     // Start ZMQ subscriber thread
     let _zmq_handle = start_zmq_subscriber(ZmqConfig::default(), zmq_tx);
@@ -75,7 +76,16 @@ fn main() {
 static UI_RX: std::sync::OnceLock<std::sync::Mutex<Option<mpsc::UnboundedReceiver<PipelineOutput>>>> =
     std::sync::OnceLock::new();
 
+/// One-shot global to pass the DB handle into the Dioxus app.
+static UI_DB: std::sync::OnceLock<std::sync::Mutex<Option<db::SharedDatabase>>> =
+    std::sync::OnceLock::new();
+
 /// Take the UI receiver (can only be called once).
 pub fn take_ui_rx() -> Option<mpsc::UnboundedReceiver<PipelineOutput>> {
     UI_RX.get()?.lock().ok()?.take()
+}
+
+/// Take the DB handle for the UI (can only be called once).
+pub fn take_ui_db() -> Option<db::SharedDatabase> {
+    UI_DB.get()?.lock().ok()?.take()
 }
