@@ -10,7 +10,9 @@ use crate::core::mempool::RemovalStats;
 use crate::core::pipeline::PipelineOutput;
 use crate::db::SignalRecord;
 
-const MAX_UI_TXS: usize = 500;
+fn max_ui_txs() -> usize {
+    crate::get_config().ui.max_feed_entries
+}
 
 /// Root UI component.
 #[component]
@@ -46,8 +48,9 @@ pub fn App() -> Element {
                     scored_txs.write().push(tx);
                     // Trim to keep UI responsive
                     let len = scored_txs.read().len();
-                    if len > MAX_UI_TXS {
-                        let drain_count = len - MAX_UI_TXS;
+                    let max_txs = max_ui_txs();
+                    if len > max_txs {
+                        let drain_count = len - max_txs;
                         scored_txs.write().drain(0..drain_count);
                     }
                     mempool_size.set(scored_txs.read().len());

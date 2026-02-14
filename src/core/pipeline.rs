@@ -9,8 +9,10 @@ use crate::core::mempool::{MempoolState, RemovalStats};
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
 use crate::core::{AnalyzedTx, MempoolEvent, RemovalReason, ScoredTx};
 use crate::db::{SharedDatabase, SignalBatchEntry};
+use crate::config::Config;
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
+use crate::signals::coinjoin::detect_coinjoin;
 use crate::tags::TagLookup;
 
 /// Resolved prevout info for a single input.
@@ -153,6 +155,7 @@ async fn resolve_all_prevouts(
 }
 
 /// How often to send stats to UI (every N txs or every N seconds).
+#[allow(dead_code)]
 const STATS_TX_INTERVAL: u64 = 100;
 const STATS_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 /// Prune confirmed/evicted entries after 5 minutes.
@@ -160,6 +163,7 @@ const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 const PRUNE_MAX_AGE: chrono::Duration = chrono::Duration::minutes(5);
 
 /// Min score to persist a signal (noise filter).
+#[allow(dead_code)]
 const SIGNAL_MIN_SCORE: f64 = 10.0;
 /// Flush signal batch to DB every N seconds.
 const SIGNAL_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -223,8 +227,14 @@ pub async fn run_pipeline(
     db: SharedDatabase,
     rpc: BitcoinRpc,
     tag_lookup: Arc<TagLookup>,
+    config: Config,
 ) {
-    let engine = SignalEngine::new();
+    let engine = SignalEngine::with_config(
+        config.signals.weights.clone(),
+        config.signals.alert_thresholds.clone(),
+    );
+    let signal_min_score = config.signals.min_score_persist;
+    let stats_tx_interval = config.ui.stats_update_interval_txs as u64;
     let mut mempool = MempoolState::new();
     let mut tx_count: u64 = 0;
     let mut block_count: u64 = 0;
@@ -291,6 +301,9 @@ pub async fn run_pipeline(
                 let from_exchange = false;
                 let from_exchange_confidence = 0.0;
 
+                // CoinJoin detection
+                let coinjoin_result = detect_coinjoin(&parsed);
+
                 let analyzed = AnalyzedTx {
                     txid: txid_str,
                     raw_size: raw.len(),
@@ -311,6 +324,8 @@ pub async fn run_pipeline(
                     to_exchange_confidence,
                     from_exchange,
                     from_exchange_confidence,
+                    is_coinjoin: coinjoin_result.is_coinjoin,
+                    coinjoin_confidence: coinjoin_result.confidence,
                 };
 
                 // Add to mempool state
@@ -320,7 +335,7 @@ pub async fn run_pipeline(
                 tx_count += 1;
 
                 // Persist signal if score is above noise threshold (non-blocking)
-                if scored.composite_score > SIGNAL_MIN_SCORE {
+                if scored.composite_score > signal_min_score {
                     let rule_scores_json = serde_json::to_string(&scored.rule_scores).unwrap_or_default();
                     let _ = signal_tx.send(SignalBatchEntry {
                         txid: scored.tx.txid.clone(),
@@ -349,7 +364,7 @@ pub async fn run_pipeline(
 
                 // Periodically send stats
                 let now = std::time::Instant::now();
-                if tx_count % STATS_TX_INTERVAL == 0
+                if tx_count % stats_tx_interval == 0
                     || now.duration_since(last_stats_time) >= STATS_TIME_INTERVAL
                 {
                     send_stats(&mempool, &ui_tx);

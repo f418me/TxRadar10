@@ -1,0 +1,36 @@
+# TxRadar10 Configuration
+# All values shown are defaults — uncomment and modify as needed.
+
+[bitcoin]
+rpc_host = "127.0.0.1"
+rpc_port = 8332
+# rpc_user = "bitcoinrpc"      # auto-detected from bitcoin.conf / cookie
+# rpc_password = "password"
+zmq_rawtx = "tcp://127.0.0.1:28333"
+zmq_hashblock = "tcp://127.0.0.1:28332"
+zmq_sequence = "tcp://127.0.0.1:28336"
+
+[signals]
+min_score_persist = 10.0
+
+[signals.weights]
+tx_value = 6.0
+utxo_age = 8.0
+cdd = 9.0
+input_count = 4.0
+fee_rate = 3.0
+rbf_flag = 2.0
+exchange_flow = 10.0
+
+[signals.alert_thresholds]
+critical = 80.0
+high = 60.0
+medium = 40.0
+
+[ui]
+max_feed_entries = 500
+stats_update_interval_txs = 100
+
+[database]
+path = "data/utxo_cache.db"
+exchange_csv = "data/exchange_addresses.csv"

@@ -51,6 +51,10 @@ pub struct AnalyzedTx {
     pub from_exchange: bool,
     /// Highest confidence of exchange tag matches on inputs.
     pub from_exchange_confidence: f64,
+    /// Whether this transaction was detected as a CoinJoin.
+    pub is_coinjoin: bool,
+    /// Confidence of CoinJoin detection (0.0-1.0).
+    pub coinjoin_confidence: f64,
 }
 
 /// A scored transaction ready for UI display.
@@ -80,11 +84,15 @@ pub enum AlertLevel {
 
 impl AlertLevel {
     pub fn from_score(score: f64) -> Self {
-        if score >= 80.0 {
+        Self::from_score_with_thresholds(score, 80.0, 60.0, 40.0)
+    }
+
+    pub fn from_score_with_thresholds(score: f64, critical: f64, high: f64, medium: f64) -> Self {
+        if score >= critical {
             AlertLevel::Critical
-        } else if score >= 60.0 {
+        } else if score >= high {
             AlertLevel::High
-        } else if score >= 40.0 {
+        } else if score >= medium {
             AlertLevel::Medium
         } else {
             AlertLevel::Low
