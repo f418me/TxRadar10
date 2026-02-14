@@ -22,17 +22,28 @@ impl Default for ZmqConfig {
     }
 }
 
-/// Parse a ZMQ sequence message body.
-/// Format: 32-byte hash + 1-byte label ('A'/'R'/'C'/'D') + 8-byte LE sequence number.
-fn parse_sequence_message(body: &[u8]) -> Option<([u8; 32], u8, u64)> {
-    if body.len() != 32 + 1 + 8 {
+/// Parse a ZMQ sequence message.
+/// Body: 32-byte hash + 1-byte label ('A'/'R'/'C'/'D').
+/// Sequence number comes as a separate ZMQ frame (4 bytes LE u32).
+fn parse_sequence_body(body: &[u8]) -> Option<([u8; 32], u8)> {
+    if body.len() != 33 {
         return None;
     }
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&body[..32]);
     let label = body[32];
-    let seq = u64::from_le_bytes(body[33..41].try_into().ok()?);
-    Some((hash, label, seq))
+    Some((hash, label))
+}
+
+/// Parse the sequence number from the ZMQ sequence frame (4 bytes LE u32).
+fn parse_sequence_number(frame: &[u8]) -> Option<u64> {
+    if frame.len() == 4 {
+        Some(u32::from_le_bytes(frame.try_into().ok()?) as u64)
+    } else if frame.len() == 8 {
+        Some(u64::from_le_bytes(frame.try_into().ok()?))
+    } else {
+        None
+    }
 }
 
 /// Start ZMQ subscriber in a blocking thread (zmq crate is synchronous).
@@ -170,17 +181,21 @@ pub fn start_zmq_subscriber(
                     match seq_sock.recv_multipart(zmq::DONTWAIT) {
                         Ok(msg) if msg.len() >= 2 && msg[0] == b"sequence" => {
                             let body = &msg[1];
-                            if let Some((hash, label, seq)) = parse_sequence_message(body) {
-                                // Missed-event detection
-                                if let Some(prev) = last_seq {
-                                    if seq != prev + 1 {
-                                        warn!(
-                                            "ZMQ sequence gap detected: expected {}, got {} (missed {} events)",
-                                            prev + 1, seq, seq.saturating_sub(prev + 1)
-                                        );
+                            if let Some((hash, label)) = parse_sequence_body(body) {
+                                // Parse sequence number from frame 2 (if present)
+                                let seq = msg.get(2).and_then(|f| parse_sequence_number(f));
+                                if let Some(s) = seq {
+                                    // Missed-event detection
+                                    if let Some(prev) = last_seq {
+                                        if s != prev + 1 {
+                                            warn!(
+                                                "ZMQ sequence gap detected: expected {}, got {} (missed {} events)",
+                                                prev + 1, s, s.saturating_sub(prev + 1)
+                                            );
+                                        }
                                     }
+                                    last_seq = Some(s);
                                 }
-                                last_seq = Some(seq);
 
                                 match label {
                                     b'A' => {
