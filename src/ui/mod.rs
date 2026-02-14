@@ -5,13 +5,46 @@ pub mod stats;
 use dioxus::prelude::*;
 
 use crate::core::ScoredTx;
+use crate::core::pipeline::PipelineOutput;
+
+const MAX_UI_TXS: usize = 500;
 
 /// Root UI component.
 #[component]
 pub fn App() -> Element {
-    // Shared signal state — will be populated from the backend channel
-    let scored_txs = use_signal(Vec::<ScoredTx>::new);
-    let mempool_size = use_signal(|| 0usize);
+    let mut scored_txs = use_signal(Vec::<ScoredTx>::new);
+    let mut mempool_size = use_signal(|| 0usize);
+    let mut block_height = use_signal(|| 0u32);
+
+    // Spawn a coroutine that reads from the pipeline channel
+    use_coroutine(move |_: UnboundedReceiver<()>| async move {
+        let Some(mut rx) = crate::take_ui_rx() else {
+            tracing::error!("Failed to take UI receiver");
+            return;
+        };
+
+        tracing::info!("UI coroutine started, listening for pipeline output");
+
+        while let Some(output) = rx.recv().await {
+            match output {
+                PipelineOutput::NewTx(tx) => {
+                    scored_txs.write().push(tx);
+                    // Trim to keep UI responsive
+                    let len = scored_txs.read().len();
+                    if len > MAX_UI_TXS {
+                        let drain_count = len - MAX_UI_TXS;
+                        scored_txs.write().drain(0..drain_count);
+                    }
+                    mempool_size.set(scored_txs.read().len());
+                }
+                PipelineOutput::BlockConnected { height } => {
+                    if height > 0 {
+                        block_height.set(height);
+                    }
+                }
+            }
+        }
+    });
 
     rsx! {
         div { class: "app",
@@ -29,7 +62,7 @@ pub fn App() -> Element {
 
                 // Right: Alerts + Stats
                 div { style: "flex: 1;",
-                    stats::MempoolStats { mempool_size }
+                    stats::MempoolStats { mempool_size, block_height }
                     alerts::AlertPanel { txs: scored_txs }
                 }
             }

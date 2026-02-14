@@ -1,4 +1,5 @@
 pub mod mempool;
+pub mod pipeline;
 pub mod tx;
 
 use chrono::{DateTime, Utc};
