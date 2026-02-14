@@ -1,5 +1,4 @@
 pub mod alerts;
-pub mod feed;
 pub mod history;
 pub mod stats;
 
@@ -10,15 +9,11 @@ use crate::core::mempool::RemovalStats;
 use crate::core::pipeline::PipelineOutput;
 use crate::db::SignalRecord;
 
-fn max_ui_txs() -> usize {
-    crate::get_config().ui.max_feed_entries
-}
-
 /// Root UI component.
 #[component]
 pub fn App() -> Element {
-    let mut scored_txs = use_signal(Vec::<ScoredTx>::new);
-    let mut mempool_size = use_signal(|| 0usize);
+    let mut alert_txs = use_signal(Vec::<ScoredTx>::new);
+    let mut tx_count = use_signal(|| 0u64);
     let mut block_height = use_signal(|| 0u32);
     let mut pending_count = use_signal(|| 0usize);
     let mut total_vsize = use_signal(|| 0usize);
@@ -28,37 +23,58 @@ pub fn App() -> Element {
     let mut history_signals = use_signal(Vec::<SignalRecord>::new);
     let mut signal_stats = use_signal(history::SignalStats::default);
 
-    // Spawn a coroutine that reads from the pipeline channel
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
         let Some(mut rx) = crate::take_ui_rx() else {
             tracing::error!("Failed to take UI receiver");
             return;
         };
 
-        // Take the shared DB handle for history queries
         let db = crate::take_ui_db();
-
         tracing::info!("UI coroutine started, listening for pipeline output");
 
-        let mut tx_since_history_refresh: u64 = 0;
+        let mut tx_since_refresh: u64 = 0;
+        let mut local_tx_count: u64 = 0;
+        let mut last_ui_update = tokio::time::Instant::now();
+        let ui_interval = tokio::time::Duration::from_secs(1);
 
-        while let Some(output) = rx.recv().await {
+        // Buffer for high-score txs between UI updates
+        let mut new_alerts: Vec<ScoredTx> = Vec::new();
+
+        loop {
+            let output = tokio::select! {
+                msg = rx.recv() => msg,
+                _ = tokio::time::sleep_until(last_ui_update + ui_interval) => {
+                    // Periodic UI flush
+                    if !new_alerts.is_empty() {
+                        let mut writer = alert_txs.write();
+                        writer.extend(new_alerts.drain(..));
+                        // Keep last 200 alerts
+                        if writer.len() > 200 {
+                            let drain = writer.len() - 200;
+                            writer.drain(0..drain);
+                        }
+                    }
+                    tx_count.set(local_tx_count);
+                    last_ui_update = tokio::time::Instant::now();
+                    continue;
+                }
+            };
+
+            let Some(output) = output else { break };
+
             match output {
                 PipelineOutput::NewTx(tx) => {
-                    scored_txs.write().push(tx);
-                    // Trim to keep UI responsive
-                    let len = scored_txs.read().len();
-                    let max_txs = max_ui_txs();
-                    if len > max_txs {
-                        let drain_count = len - max_txs;
-                        scored_txs.write().drain(0..drain_count);
-                    }
-                    mempool_size.set(scored_txs.read().len());
-                    tx_since_history_refresh += 1;
+                    local_tx_count += 1;
+                    tx_since_refresh += 1;
 
-                    // Refresh history from DB every 100 txs
-                    if tx_since_history_refresh >= 100 {
-                        tx_since_history_refresh = 0;
+                    // Only buffer alerts (High + Critical) for UI
+                    if tx.composite_score >= 40.0 {
+                        new_alerts.push(tx);
+                    }
+
+                    // Refresh history from DB periodically
+                    if tx_since_refresh >= 500 {
+                        tx_since_refresh = 0;
                         if let Some(ref db) = db {
                             refresh_history(db, &mut history_signals, &mut signal_stats);
                         }
@@ -68,7 +84,6 @@ pub fn App() -> Element {
                     if height > 0 {
                         block_height.set(height);
                     }
-                    // Refresh history on each block
                     if let Some(ref db) = db {
                         refresh_history(db, &mut history_signals, &mut signal_stats);
                     }
@@ -97,17 +112,14 @@ pub fn App() -> Element {
             h1 { style: "color: #f7931a; margin-bottom: 8px;",
                 "⚡ TxRadar10"
             }
+            p { style: "color: #666; font-size: 12px; margin-bottom: 16px;",
+                "Txs processed: {tx_count}"
+            }
 
             div { style: "display: flex; gap: 16px;",
-                // Left: Live feed
-                div { style: "flex: 2;",
-                    feed::TxFeed { txs: scored_txs }
-                }
-
-                // Right: Alerts + Stats + History
+                // Left: Stats + Alerts
                 div { style: "flex: 1;",
                     stats::MempoolStats {
-                        mempool_size,
                         block_height,
                         pending_count,
                         total_vsize,
@@ -115,7 +127,11 @@ pub fn App() -> Element {
                         fee_histogram,
                         removal_stats,
                     }
-                    alerts::AlertPanel { txs: scored_txs }
+                    alerts::AlertPanel { txs: alert_txs }
+                }
+
+                // Right: History
+                div { style: "flex: 1;",
                     history::HistoryPanel {
                         signals: history_signals,
                         signal_stats,
@@ -131,14 +147,11 @@ fn refresh_history(
     history_signals: &mut Signal<Vec<SignalRecord>>,
     signal_stats: &mut Signal<history::SignalStats>,
 ) {
-    // Get recent high-score signals
     if let Ok(recent) = db.get_signals_above_score(10.0, 50) {
         history_signals.set(recent);
     }
 
-    // Get stats
     let total_count = db.get_signal_count().unwrap_or(0);
-
     let now = chrono::Utc::now();
     let one_hour_ago = now - chrono::Duration::hours(1);
     let one_day_ago = now - chrono::Duration::hours(24);

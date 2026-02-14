@@ -97,7 +97,16 @@ fn main() {
     tracing::info!("Pipeline thread started");
 
     // Launch Dioxus desktop app (blocks)
-    dioxus::launch(ui::App);
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(
+            dioxus::desktop::Config::new()
+                .with_window(
+                    dioxus::desktop::tao::window::WindowBuilder::new()
+                        .with_title("⚡ TxRadar10")
+                        .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(1200.0, 800.0))
+                )
+        )
+        .launch(ui::App);
 }
 
 /// One-shot global to pass the UI receiver into the Dioxus app.

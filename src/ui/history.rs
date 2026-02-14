@@ -44,11 +44,15 @@ pub struct SignalStats {
 #[component]
 fn SignalRow(signal: SignalRecord) -> Element {
     let btc = signal.total_input_value as f64 / 100_000_000.0;
-    let txid_short = if signal.txid.len() > 16 {
-        &signal.txid[..16]
+    let btc_display = if btc >= 1.0 {
+        format!("{btc:.4}")
+    } else if btc >= 0.001 {
+        format!("{btc:.6}")
     } else {
-        &signal.txid
+        format!("{btc:.8}")
     };
+    let txid_full = signal.txid.clone();
+    let txid_display = signal.txid.clone();
     let exchange_badge = if signal.to_exchange { "📤" } else { "" };
     let alert_emoji = match signal.alert_level.as_str() {
         "Critical" => "🔴",
@@ -60,10 +64,18 @@ fn SignalRow(signal: SignalRecord) -> Element {
     rsx! {
         div {
             style: "background: #16213e; padding: 8px; margin: 4px 0; border-radius: 4px; font-size: 12px;",
-            div { style: "display: flex; justify-content: space-between;",
-                span {
+            div { style: "display: flex; justify-content: space-between; align-items: center;",
+                span { style: "display: flex; align-items: center; gap: 4px;",
                     "{alert_emoji} "
-                    span { style: "color: #888;", "{txid_short}..." }
+                    span {
+                        style: "color: #888; cursor: pointer; user-select: all; font-family: monospace; font-size: 11px; word-break: break-all;",
+                        onclick: move |_| {
+                            let js = format!("navigator.clipboard.writeText('{txid_full}')");
+                            document::eval(&js);
+                        },
+                        title: "Click to copy",
+                        "{txid_display}"
+                    }
                     " {exchange_badge}"
                 }
                 span { style: "font-weight: bold;",
@@ -71,7 +83,7 @@ fn SignalRow(signal: SignalRecord) -> Element {
                 }
             }
             div { style: "display: flex; justify-content: space-between; color: #888; font-size: 11px;",
-                span { "{btc:.4} BTC" }
+                span { "{btc_display} BTC" }
                 span { "{signal.fee_rate:.1} sat/vB" }
                 span { "{signal.created_at}" }
             }

@@ -26,14 +26,27 @@ pub fn AlertPanel(txs: Signal<Vec<ScoredTx>>) -> Element {
 #[component]
 fn AlertRow(tx: ScoredTx) -> Element {
     let btc = tx.tx.total_input_value as f64 / 100_000_000.0;
+    let btc_display = if btc >= 1.0 {
+        format!("{btc:.4}")
+    } else if btc >= 0.001 {
+        format!("{btc:.6}")
+    } else {
+        format!("{btc:.8}")
+    };
+    let txid_full = tx.tx.txid.clone();
 
     rsx! {
         div {
             style: "background: #2a1a00; border-left: 3px solid #f7931a; padding: 8px; margin: 4px 0; border-radius: 4px;",
             div { style: "font-weight: bold;",
-                "{tx.alert_level.emoji()} Score {tx.composite_score:.0} — {btc:.2} BTC"
+                "{tx.alert_level.emoji()} Score {tx.composite_score:.0} — {btc_display} BTC"
             }
-            div { style: "font-size: 11px; color: #888;",
+            div { style: "font-size: 11px; color: #888; cursor: pointer; user-select: all;",
+                title: "Click to copy",
+                onclick: move |_| {
+                    let js = format!("navigator.clipboard.writeText('{txid_full}')");
+                    document::eval(&js);
+                },
                 "{tx.tx.txid}"
             }
             div { style: "font-size: 11px; color: #aaa; margin-top: 4px;",
