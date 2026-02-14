@@ -202,3 +202,148 @@ impl TagLookup {
         self.cluster_tags_discovered.load(Ordering::Relaxed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db() -> SharedDatabase {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "txradar_tags_test_{}_{}.db",
+            std::process::id(),
+            id
+        ));
+        let _ = std::fs::remove_file(&path);
+        SharedDatabase::open(&path).unwrap()
+    }
+
+    fn binance_tag(address: &str, confidence: f64) -> AddressTag {
+        AddressTag {
+            address: address.to_string(),
+            entity: "Binance".to_string(),
+            entity_type: "exchange".to_string(),
+            confidence,
+            source: Some("manual".to_string()),
+        }
+    }
+
+    #[test]
+    fn cluster_expansion_tags_unknown_inputs() {
+        let db = temp_db();
+        let mut lookup = TagLookup::empty_with_db(db.clone());
+        lookup.insert(binance_tag("addr_known", 0.9));
+
+        let inputs = vec![
+            "addr_known".to_string(),
+            "addr_unknown1".to_string(),
+            "addr_unknown2".to_string(),
+        ];
+
+        let new_count = lookup.expand_from_tx(&inputs, false);
+        assert_eq!(new_count, 2);
+
+        // Check derived tags
+        let t1 = lookup.get("addr_unknown1").unwrap();
+        assert_eq!(t1.entity, "Binance");
+        assert!((t1.confidence - 0.63).abs() < 0.001); // 0.9 * 0.7
+        assert_eq!(t1.source.as_deref(), Some("cluster_heuristic"));
+
+        let t2 = lookup.get("addr_unknown2").unwrap();
+        assert!((t2.confidence - 0.63).abs() < 0.001);
+
+        // Persisted to DB
+        let db_tag = db.lookup_address("addr_unknown1").unwrap();
+        assert_eq!(db_tag.entity, "Binance");
+    }
+
+    #[test]
+    fn cluster_expansion_skipped_for_coinjoin() {
+        let mut lookup = TagLookup::empty();
+        lookup.insert(binance_tag("addr_known", 0.9));
+
+        let inputs = vec![
+            "addr_known".to_string(),
+            "addr_unknown".to_string(),
+        ];
+
+        let new_count = lookup.expand_from_tx(&inputs, true);
+        assert_eq!(new_count, 0);
+        assert!(lookup.get("addr_unknown").is_none());
+    }
+
+    #[test]
+    fn cluster_expansion_no_overwrite_higher_confidence() {
+        let mut lookup = TagLookup::empty();
+        lookup.insert(binance_tag("addr_known", 0.9));
+        // Pre-existing tag with higher confidence than 0.9*0.7=0.63
+        lookup.insert(AddressTag {
+            address: "addr_existing".to_string(),
+            entity: "Kraken".to_string(),
+            entity_type: "exchange".to_string(),
+            confidence: 0.8,
+            source: Some("manual".to_string()),
+        });
+
+        let inputs = vec![
+            "addr_known".to_string(),
+            "addr_existing".to_string(),
+        ];
+
+        let new_count = lookup.expand_from_tx(&inputs, false);
+        assert_eq!(new_count, 0);
+
+        // Still Kraken, not overwritten
+        let tag = lookup.get("addr_existing").unwrap();
+        assert_eq!(tag.entity, "Kraken");
+        assert_eq!(tag.confidence, 0.8);
+    }
+
+    #[test]
+    fn cluster_expansion_single_input_noop() {
+        let mut lookup = TagLookup::empty();
+        lookup.insert(binance_tag("addr_known", 0.9));
+
+        let inputs = vec!["addr_known".to_string()];
+        assert_eq!(lookup.expand_from_tx(&inputs, false), 0);
+    }
+
+    #[test]
+    fn cluster_expansion_no_known_tags() {
+        let mut lookup = TagLookup::empty();
+        let inputs = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(lookup.expand_from_tx(&inputs, false), 0);
+    }
+
+    #[test]
+    fn insert_tag_if_higher_confidence_db() {
+        let db = temp_db();
+        let tag_low = AddressTag {
+            address: "addr1".to_string(),
+            entity: "Binance".to_string(),
+            entity_type: "exchange".to_string(),
+            confidence: 0.5,
+            source: Some("cluster_heuristic".to_string()),
+        };
+        let tag_high = AddressTag {
+            address: "addr1".to_string(),
+            entity: "Binance".to_string(),
+            entity_type: "exchange".to_string(),
+            confidence: 0.9,
+            source: Some("manual".to_string()),
+        };
+
+        assert!(db.insert_tag_if_higher(&tag_low).unwrap());
+        // Higher replaces lower
+        assert!(db.insert_tag_if_higher(&tag_high).unwrap());
+        // Lower does NOT replace higher
+        assert!(!db.insert_tag_if_higher(&tag_low).unwrap());
+
+        let stored = db.lookup_address("addr1").unwrap();
+        assert_eq!(stored.confidence, 0.9);
+    }
+}
