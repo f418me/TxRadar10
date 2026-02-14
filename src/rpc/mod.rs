@@ -23,14 +23,10 @@ impl BitcoinRpc {
         }
     }
 
-    /// Create RPC client from bitcoin.conf or environment variables.
-    pub fn from_config() -> Self {
-        // Try environment variables first
-        let host = std::env::var("BITCOIN_RPC_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port: u16 = std::env::var("BITCOIN_RPC_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(8332);
+    /// Create RPC client from bitcoin.conf or cookie auth, with host/port from config.
+    pub fn from_config_with_defaults(host: &str, port: u16) -> Self {
+        let host = host.to_string();
+        let port = port;
 
         // Try cookie auth first
         let cookie_path = dirs_cookie_path();

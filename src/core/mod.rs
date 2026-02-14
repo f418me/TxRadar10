@@ -80,11 +80,15 @@ pub enum AlertLevel {
 
 impl AlertLevel {
     pub fn from_score(score: f64) -> Self {
-        if score >= 80.0 {
+        Self::from_score_with_thresholds(score, 80.0, 60.0, 40.0)
+    }
+
+    pub fn from_score_with_thresholds(score: f64, critical: f64, high: f64, medium: f64) -> Self {
+        if score >= critical {
             AlertLevel::Critical
-        } else if score >= 60.0 {
+        } else if score >= high {
             AlertLevel::High
-        } else if score >= 40.0 {
+        } else if score >= medium {
             AlertLevel::Medium
         } else {
             AlertLevel::Low
