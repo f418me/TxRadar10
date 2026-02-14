@@ -75,9 +75,34 @@ Credentials are loaded in order:
 3. `bitcoin.conf` (`rpcuser`/`rpcpassword`)
 4. Defaults (bitcoinrpc:bitcoinrpc @ 127.0.0.1:8332)
 
+## Mempool State Tracking
+
+`MempoolState` (in `src/core/mempool.rs`) tracks the lifecycle of every transaction:
+
+- **Pending → Confirmed**: Tx included in a block (via `TxRemoved` with `Confirmed` reason)
+- **Pending → Replaced**: Tx replaced by RBF (via `TxRemoved` with `Replaced` reason)
+- **Pending → Evicted**: Tx evicted from mempool (size limit, conflict, etc.)
+
+### Statistics exposed:
+- `pending_count()` — number of unconfirmed txs
+- `total_fees()` — sum of fees of all pending txs (sats)
+- `total_vsize()` — sum of vsize of all pending txs
+- `fee_histogram()` — distribution across buckets: 1-5, 5-10, 10-20, 20-50, 50-100, 100+ sat/vB
+
+### RBF Replacement Chains
+When a tx is replaced, the `replaced_by` field records the replacing txid. This enables
+tracking multi-hop RBF chains. Requires the ZMQ `sequence` topic (TODO).
+
+### Pruning
+Confirmed/evicted entries are retained for 5 minutes (for UI display), then pruned.
+
+### Stats Updates
+Stats are sent to the UI every 100 txs or every 5 seconds (whichever comes first),
+to avoid overwhelming the UI with per-tx updates.
+
 ## Module Structure
-- `src/core/` — Types (AnalyzedTx, ScoredTx), pipeline, tx parsing
+- `src/core/` — Types (AnalyzedTx, ScoredTx), pipeline, tx parsing, mempool state
 - `src/rpc/` — Bitcoin Core RPC client + ZMQ subscriber
 - `src/db/` — SQLite UTXO cache (thread-safe via SharedDatabase)
 - `src/signals/` — Scoring rules and composite score
-- `src/ui/` — Dioxus desktop UI (feed, alerts, stats)
+- `src/ui/` — Dioxus desktop UI (feed, alerts, stats with fee histogram)

@@ -7,6 +7,13 @@ use crate::core::MempoolEvent;
 pub struct ZmqConfig {
     pub rawtx_endpoint: String,
     pub hashblock_endpoint: String,
+    /// ZMQ sequence endpoint for tx removal notifications.
+    /// Requires Bitcoin Core `-zmqpubsequence=tcp://...` config.
+    /// TODO: Subscribe to `sequence` topic to receive TxRemoved events
+    /// with removal reason (confirmed/replaced/evicted). This enables
+    /// full mempool state tracking including RBF replacement chains.
+    #[allow(dead_code)]
+    pub sequence_endpoint: Option<String>,
 }
 
 impl Default for ZmqConfig {
@@ -14,6 +21,7 @@ impl Default for ZmqConfig {
         Self {
             rawtx_endpoint: "tcp://127.0.0.1:28333".into(),
             hashblock_endpoint: "tcp://127.0.0.1:28332".into(),
+            sequence_endpoint: None, // TODO: enable when zmqpubsequence is configured
         }
     }
 }

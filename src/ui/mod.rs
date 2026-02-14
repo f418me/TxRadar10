@@ -15,6 +15,10 @@ pub fn App() -> Element {
     let mut scored_txs = use_signal(Vec::<ScoredTx>::new);
     let mut mempool_size = use_signal(|| 0usize);
     let mut block_height = use_signal(|| 0u32);
+    let mut pending_count = use_signal(|| 0usize);
+    let mut total_vsize = use_signal(|| 0usize);
+    let mut total_fees = use_signal(|| 0u64);
+    let mut fee_histogram = use_signal(Vec::<(String, usize)>::new);
 
     // Spawn a coroutine that reads from the pipeline channel
     use_coroutine(move |_: UnboundedReceiver<()>| async move {
@@ -42,6 +46,17 @@ pub fn App() -> Element {
                         block_height.set(height);
                     }
                 }
+                PipelineOutput::MempoolStats {
+                    pending_count: pc,
+                    total_vsize: tv,
+                    total_fees: tf,
+                    fee_histogram: fh,
+                } => {
+                    pending_count.set(pc);
+                    total_vsize.set(tv);
+                    total_fees.set(tf);
+                    fee_histogram.set(fh);
+                }
             }
         }
     });
@@ -62,7 +77,14 @@ pub fn App() -> Element {
 
                 // Right: Alerts + Stats
                 div { style: "flex: 1;",
-                    stats::MempoolStats { mempool_size, block_height }
+                    stats::MempoolStats {
+                        mempool_size,
+                        block_height,
+                        pending_count,
+                        total_vsize,
+                        total_fees,
+                        fee_histogram,
+                    }
                     alerts::AlertPanel { txs: scored_txs }
                 }
             }

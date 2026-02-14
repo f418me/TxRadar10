@@ -5,8 +5,9 @@ use tracing::{debug, error, info, warn};
 
 use std::sync::Arc;
 
+use crate::core::mempool::MempoolState;
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
-use crate::core::{AnalyzedTx, MempoolEvent, ScoredTx};
+use crate::core::{AnalyzedTx, MempoolEvent, RemovalReason, ScoredTx};
 use crate::db::SharedDatabase;
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
@@ -152,6 +153,22 @@ async fn resolve_all_prevouts(
     (total_input_value, oldest_dt, oldest_height, cdd_opt, resolved_count)
 }
 
+/// How often to send stats to UI (every N txs or every N seconds).
+const STATS_TX_INTERVAL: u64 = 100;
+const STATS_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+/// Prune confirmed/evicted entries after 5 minutes.
+const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const PRUNE_MAX_AGE: chrono::Duration = chrono::Duration::minutes(5);
+
+fn send_stats(state: &MempoolState, ui_tx: &mpsc::UnboundedSender<PipelineOutput>) {
+    let _ = ui_tx.send(PipelineOutput::MempoolStats {
+        pending_count: state.pending_count(),
+        total_vsize: state.total_vsize(),
+        total_fees: state.total_fees(),
+        fee_histogram: state.fee_histogram(),
+    });
+}
+
 /// Run the pipeline: receive MempoolEvents, analyze, score, forward to UI.
 pub async fn run_pipeline(
     mut rx: mpsc::UnboundedReceiver<MempoolEvent>,
@@ -161,12 +178,15 @@ pub async fn run_pipeline(
     tag_lookup: Arc<TagLookup>,
 ) {
     let engine = SignalEngine::new();
+    let mut mempool = MempoolState::new();
     let mut tx_count: u64 = 0;
     let mut block_count: u64 = 0;
     let mut resolved_total: u64 = 0;
     let mut unresolved_total: u64 = 0;
+    let mut last_stats_time = std::time::Instant::now();
+    let mut last_prune_time = std::time::Instant::now();
 
-    info!("Pipeline started with prevout resolution enabled");
+    info!("Pipeline started with prevout resolution and mempool state tracking");
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -241,12 +261,16 @@ pub async fn run_pipeline(
                     from_exchange_confidence,
                 };
 
+                // Add to mempool state
+                mempool.add_tx(analyzed.clone());
+
                 let scored = engine.score(&analyzed);
                 tx_count += 1;
 
                 if tx_count % 1000 == 0 {
                     info!(
-                        "Pipeline: {tx_count} txs, {block_count} blocks, prevouts resolved: {resolved_total}, unresolved: {unresolved_total}"
+                        "Pipeline: {tx_count} txs, {block_count} blocks, prevouts resolved: {resolved_total}, unresolved: {unresolved_total}, mempool pending: {}",
+                        mempool.pending_count()
                     );
                 }
 
@@ -254,17 +278,44 @@ pub async fn run_pipeline(
                     info!("UI channel closed, stopping pipeline");
                     break;
                 }
+
+                // Periodically send stats
+                let now = std::time::Instant::now();
+                if tx_count % STATS_TX_INTERVAL == 0
+                    || now.duration_since(last_stats_time) >= STATS_TIME_INTERVAL
+                {
+                    send_stats(&mempool, &ui_tx);
+                    last_stats_time = now;
+                }
+
+                // Periodically prune old entries
+                if now.duration_since(last_prune_time) >= PRUNE_INTERVAL {
+                    mempool.prune_old(PRUNE_MAX_AGE);
+                    last_prune_time = now;
+                }
             }
             MempoolEvent::BlockConnected { block_hash: _, height } => {
                 block_count += 1;
                 info!("Block connected: height={height} (total blocks seen: {block_count})");
                 let _ = ui_tx.send(PipelineOutput::BlockConnected { height });
+                // After a block, send updated stats
+                send_stats(&mempool, &ui_tx);
             }
             MempoolEvent::BlockDisconnected { block_hash: _, height } => {
                 warn!("Block disconnected: height={height}");
             }
-            MempoolEvent::TxRemoved { txid: _, reason } => {
-                debug!("Tx removed: {reason:?}");
+            MempoolEvent::TxRemoved { txid, reason } => {
+                // Convert txid bytes to hex string (reversed for bitcoin display order)
+                let txid_hex: String = txid.iter().rev().map(|b| format!("{b:02x}")).collect();
+                debug!("Tx removed: {txid_hex} reason={reason:?}");
+                mempool.remove_tx(&txid_hex, reason);
+
+                // If replaced, try to record the replacement chain
+                if reason == RemovalReason::Replaced {
+                    // We don't know the replacing txid from ZMQ alone;
+                    // the replacement tracking requires the `sequence` topic.
+                    // TODO: wire up ZMQ sequence topic for full RBF tracking
+                }
             }
         }
     }
@@ -277,4 +328,10 @@ pub async fn run_pipeline(
 pub enum PipelineOutput {
     NewTx(ScoredTx),
     BlockConnected { height: u32 },
+    MempoolStats {
+        pending_count: usize,
+        total_vsize: usize,
+        total_fees: u64,
+        fee_histogram: Vec<(String, usize)>,
+    },
 }
