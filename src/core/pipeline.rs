@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::core::mempool::MempoolState;
 use crate::core::tx::{is_rbf_signaling, parse_raw_tx, vsize};
 use crate::core::{AnalyzedTx, MempoolEvent, RemovalReason, ScoredTx};
-use crate::db::SharedDatabase;
+use crate::db::{SharedDatabase, SignalBatchEntry};
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
 use crate::tags::TagLookup;
@@ -100,7 +100,6 @@ async fn resolve_all_prevouts(
 
     for input in &parsed.input {
         // Skip coinbase inputs
-        // Skip coinbase (null txid)
         let null_txid: [u8; 32] = [0u8; 32];
         if AsRef::<[u8; 32]>::as_ref(&input.previous_output.txid) == &null_txid {
             continue;
@@ -160,12 +159,59 @@ const STATS_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(
 const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 const PRUNE_MAX_AGE: chrono::Duration = chrono::Duration::minutes(5);
 
+/// Min score to persist a signal (noise filter).
+const SIGNAL_MIN_SCORE: f64 = 10.0;
+/// Flush signal batch to DB every N seconds.
+const SIGNAL_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn send_stats(state: &MempoolState, ui_tx: &mpsc::UnboundedSender<PipelineOutput>) {
     let _ = ui_tx.send(PipelineOutput::MempoolStats {
         pending_count: state.pending_count(),
         total_vsize: state.total_vsize(),
         total_fees: state.total_fees(),
         fee_histogram: state.fee_histogram(),
+    });
+}
+
+/// Spawn a background task that flushes signal batches to DB.
+fn spawn_signal_flusher(
+    db: SharedDatabase,
+    mut flush_rx: mpsc::UnboundedReceiver<SignalBatchEntry>,
+) {
+    tokio::spawn(async move {
+        let mut buffer: Vec<SignalBatchEntry> = Vec::new();
+        let mut interval = tokio::time::interval(SIGNAL_FLUSH_INTERVAL);
+
+        loop {
+            tokio::select! {
+                entry = flush_rx.recv() => {
+                    match entry {
+                        Some(e) => buffer.push(e),
+                        None => {
+                            // Channel closed, flush remaining
+                            if !buffer.is_empty() {
+                                if let Err(e) = db.store_signals_batch(&buffer) {
+                                    error!("Failed to flush final signal batch: {e}");
+                                }
+                            }
+                            info!("Signal flusher shutting down");
+                            return;
+                        }
+                    }
+                }
+                _ = interval.tick() => {
+                    if !buffer.is_empty() {
+                        let batch: Vec<SignalBatchEntry> = buffer.drain(..).collect();
+                        let count = batch.len();
+                        if let Err(e) = db.store_signals_batch(&batch) {
+                            error!("Failed to flush {count} signals to DB: {e}");
+                        } else {
+                            debug!("Flushed {count} signals to DB");
+                        }
+                    }
+                }
+            }
+        }
     });
 }
 
@@ -185,8 +231,13 @@ pub async fn run_pipeline(
     let mut unresolved_total: u64 = 0;
     let mut last_stats_time = std::time::Instant::now();
     let mut last_prune_time = std::time::Instant::now();
+    let mut current_block_height: u32 = 0;
 
-    info!("Pipeline started with prevout resolution and mempool state tracking");
+    // Signal batch flusher (non-blocking DB writes)
+    let (signal_tx, signal_rx) = mpsc::unbounded_channel::<SignalBatchEntry>();
+    spawn_signal_flusher(db.clone(), signal_rx);
+
+    info!("Pipeline started with prevout resolution, mempool state tracking, and signal persistence");
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -267,6 +318,22 @@ pub async fn run_pipeline(
                 let scored = engine.score(&analyzed);
                 tx_count += 1;
 
+                // Persist signal if score is above noise threshold (non-blocking)
+                if scored.composite_score > SIGNAL_MIN_SCORE {
+                    let rule_scores_json = serde_json::to_string(&scored.rule_scores).unwrap_or_default();
+                    let _ = signal_tx.send(SignalBatchEntry {
+                        txid: scored.tx.txid.clone(),
+                        score: scored.composite_score,
+                        alert_level: format!("{:?}", scored.alert_level),
+                        rule_scores_json,
+                        to_exchange: scored.tx.to_exchange,
+                        total_input_value: scored.tx.total_input_value,
+                        fee_rate: scored.tx.fee_rate,
+                        coin_days_destroyed: scored.tx.coin_days_destroyed,
+                        block_height_seen: current_block_height,
+                    });
+                }
+
                 if tx_count % 1000 == 0 {
                     info!(
                         "Pipeline: {tx_count} txs, {block_count} blocks, prevouts resolved: {resolved_total}, unresolved: {unresolved_total}, mempool pending: {}",
@@ -296,6 +363,9 @@ pub async fn run_pipeline(
             }
             MempoolEvent::BlockConnected { block_hash: _, height } => {
                 block_count += 1;
+                if height > 0 {
+                    current_block_height = height;
+                }
                 info!("Block connected: height={height} (total blocks seen: {block_count})");
                 let _ = ui_tx.send(PipelineOutput::BlockConnected { height });
                 // After a block, send updated stats
