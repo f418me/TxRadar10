@@ -130,3 +130,235 @@ impl Rule for ExchangeFlowRule {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_test_tx() -> AnalyzedTx {
+        AnalyzedTx {
+            txid: "deadbeef".to_string(),
+            raw_size: 250,
+            vsize: 200,
+            total_input_value: 0,
+            total_output_value: 0,
+            fee: 2000,
+            fee_rate: 10.0,
+            input_count: 1,
+            output_count: 2,
+            oldest_input_height: None,
+            oldest_input_time: None,
+            coin_days_destroyed: None,
+            is_rbf_signaling: false,
+            seen_at: Utc::now(),
+            prevouts_resolved: false,
+            to_exchange: false,
+            to_exchange_confidence: 0.0,
+            from_exchange: false,
+            from_exchange_confidence: 0.0,
+            is_coinjoin: false,
+            coinjoin_confidence: 0.0,
+        }
+    }
+
+    #[test]
+    fn tx_value_zero() {
+        let rule = TxValueRule;
+        let tx = make_test_tx();
+        assert!((rule.evaluate(&tx) - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn tx_value_midpoint() {
+        let rule = TxValueRule;
+        let mut tx = make_test_tx();
+        tx.total_input_value = 10_0000_0000; // 10 BTC
+        let score = rule.evaluate(&tx);
+        assert!((score - 0.5).abs() < 0.01, "Expected ~0.5, got {score}");
+    }
+
+    #[test]
+    fn tx_value_high() {
+        let rule = TxValueRule;
+        let mut tx = make_test_tx();
+        tx.total_input_value = 1000_0000_0000; // 1000 BTC
+        let score = rule.evaluate(&tx);
+        assert!(score > 0.98, "Expected ~1.0, got {score}");
+    }
+
+    #[test]
+    fn utxo_age_none() {
+        let rule = UtxoAgeRule;
+        let tx = make_test_tx();
+        assert_eq!(rule.evaluate(&tx), 0.0);
+    }
+
+    #[test]
+    fn utxo_age_one_year() {
+        let rule = UtxoAgeRule;
+        let mut tx = make_test_tx();
+        tx.oldest_input_time = Some(Utc::now() - chrono::Duration::days(365));
+        let score = rule.evaluate(&tx);
+        assert!((score - 0.5).abs() < 0.05, "Expected ~0.5, got {score}");
+    }
+
+    #[test]
+    fn cdd_none() {
+        let rule = CoinDaysDestroyedRule;
+        let tx = make_test_tx();
+        assert_eq!(rule.evaluate(&tx), 0.0);
+    }
+
+    #[test]
+    fn cdd_midpoint() {
+        let rule = CoinDaysDestroyedRule;
+        let mut tx = make_test_tx();
+        tx.coin_days_destroyed = Some(1000.0);
+        let score = rule.evaluate(&tx);
+        assert!((score - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn cdd_high() {
+        let rule = CoinDaysDestroyedRule;
+        let mut tx = make_test_tx();
+        tx.coin_days_destroyed = Some(100_000.0);
+        assert!(rule.evaluate(&tx) > 0.98);
+    }
+
+    #[test]
+    fn cdd_zero_value() {
+        let rule = CoinDaysDestroyedRule;
+        let mut tx = make_test_tx();
+        tx.coin_days_destroyed = Some(0.0);
+        assert!((rule.evaluate(&tx)).abs() < 0.001);
+    }
+
+    #[test]
+    fn input_count_single() {
+        let rule = InputCountRule;
+        let mut tx = make_test_tx();
+        tx.input_count = 1;
+        assert!(rule.evaluate(&tx) < 0.1);
+    }
+
+    #[test]
+    fn input_count_midpoint() {
+        let rule = InputCountRule;
+        let mut tx = make_test_tx();
+        tx.input_count = 20;
+        let score = rule.evaluate(&tx);
+        assert!((score - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn fee_rate_zero() {
+        let rule = FeeRateRule;
+        let mut tx = make_test_tx();
+        tx.fee_rate = 0.0;
+        assert!((rule.evaluate(&tx)).abs() < 0.001);
+    }
+
+    #[test]
+    fn fee_rate_midpoint() {
+        let rule = FeeRateRule;
+        let mut tx = make_test_tx();
+        tx.fee_rate = 50.0;
+        let score = rule.evaluate(&tx);
+        assert!((score - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn rbf_signaling() {
+        let rule = RbfRule;
+        let mut tx = make_test_tx();
+        tx.is_rbf_signaling = true;
+        assert_eq!(rule.evaluate(&tx), 0.5);
+    }
+
+    #[test]
+    fn rbf_not_signaling() {
+        let rule = RbfRule;
+        let tx = make_test_tx();
+        assert_eq!(rule.evaluate(&tx), 0.0);
+    }
+
+    #[test]
+    fn coinjoin_not_detected() {
+        let rule = CoinJoinRule;
+        let tx = make_test_tx();
+        assert_eq!(rule.evaluate(&tx), 0.0);
+    }
+
+    #[test]
+    fn coinjoin_high_confidence() {
+        let rule = CoinJoinRule;
+        let mut tx = make_test_tx();
+        tx.is_coinjoin = true;
+        tx.coinjoin_confidence = 0.95;
+        assert!((rule.evaluate(&tx) - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn coinjoin_clamped_above_one() {
+        let rule = CoinJoinRule;
+        let mut tx = make_test_tx();
+        tx.is_coinjoin = true;
+        tx.coinjoin_confidence = 1.5;
+        assert_eq!(rule.evaluate(&tx), 1.0);
+    }
+
+    #[test]
+    fn exchange_flow_to_exchange() {
+        let rule = ExchangeFlowRule;
+        let mut tx = make_test_tx();
+        tx.to_exchange = true;
+        tx.to_exchange_confidence = 0.8;
+        assert!((rule.evaluate(&tx) - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn exchange_flow_from_exchange() {
+        let rule = ExchangeFlowRule;
+        let mut tx = make_test_tx();
+        tx.from_exchange = true;
+        tx.from_exchange_confidence = 1.0;
+        let score = rule.evaluate(&tx);
+        assert!((score - (-0.5)).abs() < 0.001);
+    }
+
+    #[test]
+    fn exchange_flow_neither() {
+        let rule = ExchangeFlowRule;
+        let tx = make_test_tx();
+        assert_eq!(rule.evaluate(&tx), 0.0);
+    }
+
+    #[test]
+    fn exchange_flow_both_prefers_to() {
+        let rule = ExchangeFlowRule;
+        let mut tx = make_test_tx();
+        tx.to_exchange = true;
+        tx.to_exchange_confidence = 0.9;
+        tx.from_exchange = true;
+        tx.from_exchange_confidence = 0.8;
+        assert!((rule.evaluate(&tx) - 0.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn default_rules_count() {
+        let rules = default_rules();
+        assert_eq!(rules.len(), 8);
+    }
+
+    #[test]
+    fn all_rules_names_unique() {
+        let rules = default_rules();
+        let mut names: Vec<&str> = rules.iter().map(|r| r.name()).collect();
+        let len = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(len, names.len());
+    }
+}

@@ -108,3 +108,49 @@ impl AlertLevel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alert_level_from_score_critical() {
+        assert_eq!(AlertLevel::from_score(80.0), AlertLevel::Critical);
+        assert_eq!(AlertLevel::from_score(100.0), AlertLevel::Critical);
+        assert_eq!(AlertLevel::from_score(95.5), AlertLevel::Critical);
+    }
+
+    #[test]
+    fn alert_level_from_score_high() {
+        assert_eq!(AlertLevel::from_score(60.0), AlertLevel::High);
+        assert_eq!(AlertLevel::from_score(79.9), AlertLevel::High);
+    }
+
+    #[test]
+    fn alert_level_from_score_medium() {
+        assert_eq!(AlertLevel::from_score(40.0), AlertLevel::Medium);
+        assert_eq!(AlertLevel::from_score(59.9), AlertLevel::Medium);
+    }
+
+    #[test]
+    fn alert_level_from_score_low() {
+        assert_eq!(AlertLevel::from_score(0.0), AlertLevel::Low);
+        assert_eq!(AlertLevel::from_score(39.9), AlertLevel::Low);
+    }
+
+    #[test]
+    fn alert_level_emoji() {
+        assert_eq!(AlertLevel::Critical.emoji(), "🔴");
+        assert_eq!(AlertLevel::High.emoji(), "🟠");
+        assert_eq!(AlertLevel::Medium.emoji(), "🟡");
+        assert_eq!(AlertLevel::Low.emoji(), "⚪");
+    }
+
+    #[test]
+    fn alert_level_custom_thresholds() {
+        assert_eq!(AlertLevel::from_score_with_thresholds(90.0, 90.0, 70.0, 50.0), AlertLevel::Critical);
+        assert_eq!(AlertLevel::from_score_with_thresholds(89.9, 90.0, 70.0, 50.0), AlertLevel::High);
+        assert_eq!(AlertLevel::from_score_with_thresholds(69.9, 90.0, 70.0, 50.0), AlertLevel::Medium);
+        assert_eq!(AlertLevel::from_score_with_thresholds(49.9, 90.0, 70.0, 50.0), AlertLevel::Low);
+    }
+}

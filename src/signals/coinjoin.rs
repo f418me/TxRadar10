@@ -119,7 +119,7 @@ pub fn detect_coinjoin(tx: &Transaction) -> CoinJoinResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitcoin::{Amount, ScriptBuf, TxIn, TxOut, Txid};
+    use bitcoin::{Amount, ScriptBuf, TxIn, TxOut};
 
     fn make_tx(input_count: usize, outputs_sats: &[u64]) -> Transaction {
         let inputs: Vec<TxIn> = (0..input_count)
@@ -187,5 +187,78 @@ mod tests {
         let tx = make_tx(5, &[100_000, 100_000, 200_000, 300_000, 400_000]);
         let result = detect_coinjoin(&tx);
         assert!(!result.is_coinjoin);
+    }
+
+    #[test]
+    fn test_empty_outputs() {
+        let tx = make_tx(0, &[]);
+        let result = detect_coinjoin(&tx);
+        assert!(!result.is_coinjoin);
+    }
+
+    #[test]
+    fn test_single_output() {
+        let tx = make_tx(1, &[50_000]);
+        let result = detect_coinjoin(&tx);
+        assert!(!result.is_coinjoin);
+    }
+
+    #[test]
+    fn test_two_equal_outputs_under_threshold() {
+        let tx = make_tx(3, &[100_000, 100_000, 50_000]);
+        let result = detect_coinjoin(&tx);
+        assert!(!result.is_coinjoin);
+    }
+
+    #[test]
+    fn test_whirlpool_all_pool_sizes() {
+        for &pool in &[100_000u64, 1_000_000, 5_000_000, 50_000_000] {
+            let mut outputs = vec![pool; 5];
+            outputs.push(10_000); // change
+            let tx = make_tx(5, &outputs);
+            let result = detect_coinjoin(&tx);
+            assert!(result.is_coinjoin, "Whirlpool pool {pool} not detected");
+            assert_eq!(result.pattern, CoinJoinPattern::WhirlpoolPool);
+            assert!(result.confidence >= 0.9);
+        }
+    }
+
+    #[test]
+    fn test_normal_payment_not_coinjoin() {
+        // Typical 1-in 2-out payment
+        let tx = make_tx(1, &[50_000, 49_000]);
+        assert!(!detect_coinjoin(&tx).is_coinjoin);
+    }
+
+    #[test]
+    fn test_consolidation_not_coinjoin() {
+        // Many inputs, 1 output
+        let tx = make_tx(10, &[1_000_000]);
+        assert!(!detect_coinjoin(&tx).is_coinjoin);
+    }
+
+    #[test]
+    fn test_three_equal_high_ratio_weak_signal() {
+        // 3 equal out of 4 (75% > 70%) but few IO → weak signal
+        let tx = make_tx(3, &[500_000, 500_000, 500_000, 10_000]);
+        let result = detect_coinjoin(&tx);
+        assert!(result.is_coinjoin);
+        assert_eq!(result.confidence, 0.5);
+    }
+
+    #[test]
+    fn test_equal_ratio_below_50_percent() {
+        // 3 equal but only 37.5% of outputs
+        let tx = make_tx(5, &[100_000, 100_000, 100_000, 200_000, 300_000, 400_000, 500_000, 600_000]);
+        let result = detect_coinjoin(&tx);
+        assert!(!result.is_coinjoin);
+    }
+
+    #[test]
+    fn test_default_result() {
+        let d = CoinJoinResult::default();
+        assert!(!d.is_coinjoin);
+        assert_eq!(d.confidence, 0.0);
+        assert_eq!(d.pattern, CoinJoinPattern::Unknown);
     }
 }

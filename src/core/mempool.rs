@@ -201,6 +201,12 @@ impl MempoolState {
             .collect()
     }
 
+    /// Get an entry by txid (for testing).
+    #[cfg(test)]
+    pub fn get(&self, txid: &str) -> Option<&MempoolEntry> {
+        self.entries.get(txid)
+    }
+
     /// Prune non-pending entries older than given duration.
     pub fn prune_old(&mut self, max_age: chrono::Duration) {
         let cutoff = Utc::now() - max_age;
@@ -214,5 +220,168 @@ impl MempoolState {
             self.entries.remove(txid);
             self.replacement_chain.remove(txid);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::AnalyzedTx;
+
+    fn make_tx(txid: &str, fee: u64, fee_rate: f64, vsize: usize) -> AnalyzedTx {
+        AnalyzedTx {
+            txid: txid.to_string(),
+            raw_size: 250,
+            vsize,
+            total_input_value: 100_000,
+            total_output_value: 100_000 - fee,
+            fee,
+            fee_rate,
+            input_count: 1,
+            output_count: 2,
+            oldest_input_height: None,
+            oldest_input_time: None,
+            coin_days_destroyed: None,
+            is_rbf_signaling: false,
+            seen_at: Utc::now(),
+            prevouts_resolved: false,
+            to_exchange: false,
+            to_exchange_confidence: 0.0,
+            from_exchange: false,
+            from_exchange_confidence: 0.0,
+            is_coinjoin: false,
+            coinjoin_confidence: 0.0,
+        }
+    }
+
+    #[test]
+    fn add_tx_increases_pending() {
+        let mut state = MempoolState::new();
+        assert_eq!(state.pending_count(), 0);
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        assert_eq!(state.pending_count(), 1);
+        state.add_tx(make_tx("tx2", 2000, 10.0, 200));
+        assert_eq!(state.pending_count(), 2);
+    }
+
+    #[test]
+    fn remove_tx_confirmed() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.remove_tx("tx1", RemovalReason::Confirmed);
+        assert_eq!(state.pending_count(), 0);
+        assert_eq!(state.get("tx1").unwrap().state, TxState::Confirmed);
+        assert_eq!(state.removal_stats().confirmed, 1);
+    }
+
+    #[test]
+    fn remove_tx_replaced() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.remove_tx("tx1", RemovalReason::Replaced);
+        assert_eq!(state.get("tx1").unwrap().state, TxState::Replaced);
+        assert_eq!(state.removal_stats().replaced, 1);
+    }
+
+    #[test]
+    fn remove_tx_evicted() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.remove_tx("tx1", RemovalReason::Evicted);
+        assert_eq!(state.get("tx1").unwrap().state, TxState::Evicted);
+        assert_eq!(state.removal_stats().evicted, 1);
+    }
+
+    #[test]
+    fn remove_tx_unknown_reason() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.remove_tx("tx1", RemovalReason::Unknown);
+        assert_eq!(state.removal_stats().unknown, 1);
+    }
+
+    #[test]
+    fn remove_untracked_tx_still_counts() {
+        let mut state = MempoolState::new();
+        state.remove_tx("unknown_tx", RemovalReason::Confirmed);
+        assert_eq!(state.removal_stats().confirmed, 1);
+    }
+
+    #[test]
+    fn removal_stats_total() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.add_tx(make_tx("tx2", 2000, 10.0, 200));
+        state.remove_tx("tx1", RemovalReason::Confirmed);
+        state.remove_tx("tx2", RemovalReason::Replaced);
+        assert_eq!(state.removal_stats().total(), 2);
+    }
+
+    #[test]
+    fn total_fees_and_vsize() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.add_tx(make_tx("tx2", 2000, 10.0, 300));
+        assert_eq!(state.total_fees(), 3000);
+        assert_eq!(state.total_vsize(), 500);
+        // After removing one, only pending counts
+        state.remove_tx("tx1", RemovalReason::Confirmed);
+        assert_eq!(state.total_fees(), 2000);
+        assert_eq!(state.total_vsize(), 300);
+    }
+
+    #[test]
+    fn fee_histogram_buckets() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 3.0, 200));   // 1-5 bucket
+        state.add_tx(make_tx("tx2", 2000, 7.0, 200));   // 5-10 bucket
+        state.add_tx(make_tx("tx3", 3000, 15.0, 200));  // 10-20 bucket
+        state.add_tx(make_tx("tx4", 4000, 55.0, 200));  // 50-100 bucket
+        state.add_tx(make_tx("tx5", 5000, 150.0, 200)); // 100+ bucket
+
+        let hist = state.fee_histogram();
+        assert_eq!(hist.len(), 6);
+        assert_eq!(hist[0], ("1-5".to_string(), 1));
+        assert_eq!(hist[1], ("5-10".to_string(), 1));
+        assert_eq!(hist[2], ("10-20".to_string(), 1));
+        assert_eq!(hist[3], ("20-50".to_string(), 0));
+        assert_eq!(hist[4], ("50-100".to_string(), 1));
+        assert_eq!(hist[5], ("100+".to_string(), 1));
+    }
+
+    #[test]
+    fn prune_old_removes_non_pending() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.add_tx(make_tx("tx2", 2000, 10.0, 200));
+        state.remove_tx("tx1", RemovalReason::Confirmed);
+
+        // Manually backdate the state_changed_at
+        if let Some(entry) = state.entries.get_mut("tx1") {
+            entry.state_changed_at = Utc::now() - chrono::Duration::hours(2);
+        }
+
+        state.prune_old(chrono::Duration::hours(1));
+        assert!(state.get("tx1").is_none()); // pruned
+        assert!(state.get("tx2").is_some()); // still pending, kept
+    }
+
+    #[test]
+    fn prune_old_keeps_pending() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx1", 1000, 5.0, 200));
+        state.prune_old(chrono::Duration::seconds(0));
+        // Pending entries are never pruned
+        assert!(state.get("tx1").is_some());
+    }
+
+    #[test]
+    fn record_replacement() {
+        let mut state = MempoolState::new();
+        state.add_tx(make_tx("tx_old", 1000, 5.0, 200));
+        state.record_replacement("tx_old", "tx_new");
+        let entry = state.get("tx_old").unwrap();
+        assert_eq!(entry.state, TxState::Replaced);
+        assert_eq!(entry.replaced_by.as_deref(), Some("tx_new"));
     }
 }
