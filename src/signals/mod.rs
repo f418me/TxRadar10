@@ -1,3 +1,4 @@
+pub mod coinjoin;
 pub mod rules;
 pub mod score;
 

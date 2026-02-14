@@ -35,6 +35,9 @@ fn TxRow(tx: ScoredTx) -> Element {
             div { style: "display: flex; justify-content: space-between;",
                 span {
                     "{tx.alert_level.emoji()} "
+                    if tx.tx.is_coinjoin {
+                        span { style: "color: #8888ff;", "🔄 " }
+                    }
                     span { style: "color: #888;", "{&tx.tx.txid[..16]}..." }
                 }
                 span { style: "font-weight: bold;",

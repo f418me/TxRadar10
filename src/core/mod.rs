@@ -51,6 +51,10 @@ pub struct AnalyzedTx {
     pub from_exchange: bool,
     /// Highest confidence of exchange tag matches on inputs.
     pub from_exchange_confidence: f64,
+    /// Whether this transaction was detected as a CoinJoin.
+    pub is_coinjoin: bool,
+    /// Confidence of CoinJoin detection (0.0-1.0).
+    pub coinjoin_confidence: f64,
 }
 
 /// A scored transaction ready for UI display.

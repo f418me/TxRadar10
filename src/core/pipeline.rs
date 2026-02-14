@@ -12,6 +12,7 @@ use crate::db::{SharedDatabase, SignalBatchEntry};
 use crate::config::Config;
 use crate::rpc::BitcoinRpc;
 use crate::signals::SignalEngine;
+use crate::signals::coinjoin::detect_coinjoin;
 use crate::tags::TagLookup;
 
 /// Resolved prevout info for a single input.
@@ -300,6 +301,9 @@ pub async fn run_pipeline(
                 let from_exchange = false;
                 let from_exchange_confidence = 0.0;
 
+                // CoinJoin detection
+                let coinjoin_result = detect_coinjoin(&parsed);
+
                 let analyzed = AnalyzedTx {
                     txid: txid_str,
                     raw_size: raw.len(),
@@ -320,6 +324,8 @@ pub async fn run_pipeline(
                     to_exchange_confidence,
                     from_exchange,
                     from_exchange_confidence,
+                    is_coinjoin: coinjoin_result.is_coinjoin,
+                    coinjoin_confidence: coinjoin_result.confidence,
                 };
 
                 // Add to mempool state

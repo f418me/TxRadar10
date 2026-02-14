@@ -18,6 +18,7 @@ pub fn default_rules() -> Vec<Box<dyn Rule + Send + Sync>> {
         Box::new(FeeRateRule),
         Box::new(RbfRule),
         Box::new(ExchangeFlowRule),
+        Box::new(CoinJoinRule),
     ]
 }
 
@@ -92,6 +93,21 @@ impl Rule for RbfRule {
     fn default_weight(&self) -> f64 { 2.0 }
     fn evaluate(&self, tx: &AnalyzedTx) -> f64 {
         if tx.is_rbf_signaling { 0.5 } else { 0.0 }
+    }
+}
+
+/// CoinJoin detection — negative weight to reduce false positives.
+/// CoinJoin transactions are privacy txs, not directional signals.
+struct CoinJoinRule;
+impl Rule for CoinJoinRule {
+    fn name(&self) -> &str { "coinjoin" }
+    fn default_weight(&self) -> f64 { -6.0 }
+    fn evaluate(&self, tx: &AnalyzedTx) -> f64 {
+        if tx.is_coinjoin {
+            tx.coinjoin_confidence.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 }
 
