@@ -2,6 +2,10 @@
 
 Real-time Bitcoin mempool monitor that detects whale movements, old-coin spending, and exchange flows — distilled into actionable trading signals.
 
+## Warning
+This project is highly experimental. The code is mainly developed by several parallel running AI agents, notably openclaw. Use with caution.
+Use the signals for trading only if you fully understand the risks and know what you are doing at your own risk.
+
 ## Architecture
 
 ```
